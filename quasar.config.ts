@@ -199,16 +199,21 @@ export default defineConfig((/* ctx */) => {
           url: 'https://gitlab.com/dspears312/the-choir-organ/-/releases'
         },
         linux: {
-          target: ['AppImage', 'snap'],
-          arch: ['x64', 'arm64']
+          target: [
+            { target: 'AppImage', arch: ['x64', 'arm64'] },
+            { target: 'snap', arch: ['x64', 'arm64'] }
+          ]
         },
         win: {
-          target: ['nsis'],
-          arch: ['x64', 'arm64']
+          target: [
+            { target: 'nsis', arch: ['x64', 'arm64'] }
+          ]
         },
         mac: {
-          target: ['dmg', 'zip'],
-          arch: ['universal']
+          target: [
+            { target: 'dmg', arch: ['universal'] },
+            { target: 'zip', arch: ['universal'] }
+          ]
         }
       }
     },
