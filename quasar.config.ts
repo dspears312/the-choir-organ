@@ -217,6 +217,7 @@ export default defineConfig((/* ctx */) => {
         mac: {
           mergeASARs: true,
           target: [
+            { target: 'zip', arch: ['universal'] },
             { target: 'dmg', arch: ['universal'] }
           ]
         }
