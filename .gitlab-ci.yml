@@ -1,0 +1,69 @@
+image: node:20
+
+stages:
+  - build
+
+variables:
+  BUN_VERSION: "1.3.5"
+
+cache:
+  key:
+    files:
+      - bun.lock
+  paths:
+    - .npm/
+    - node_modules/
+
+before_script:
+  - curl -fsSL https://bun.sh/install | bash
+  - export PATH=$HOME/.bun/bin:$PATH
+  - bun install
+  - bun run prepare
+
+build_linux:
+  stage: build
+  script:
+    - bun run build -- -P linux
+  artifacts:
+    paths:
+      - dist/electron/Packaged/*linux*.AppImage
+      - dist/electron/Packaged/*linux*.snap
+      - dist/electron/Packaged/*.zsync
+      - dist/electron/Packaged/latest-linux.yml
+    expire_in: 1 week
+  only:
+    - main
+    - tags
+
+build_windows:
+  stage: build
+  image: electronuserland/builder:wine
+  script:
+    - bun run build -- -P win
+  artifacts:
+    paths:
+      - dist/electron/Packaged/*win*.exe
+      - dist/electron/Packaged/*.exe.blockmap
+      - dist/electron/Packaged/latest.yml
+    expire_in: 1 week
+  only:
+    - main
+    - tags
+
+build_macos:
+  stage: build
+  tags:
+    - macos
+  script:
+    - bun run build -- -P mac
+  artifacts:
+    paths:
+      - dist/electron/Packaged/*mac*.dmg
+      - dist/electron/Packaged/*mac*.zip
+      - dist/electron/Packaged/*.zip.blockmap
+      - dist/electron/Packaged/latest-mac.yml
+    expire_in: 1 week
+  only:
+    - main
+    - tags
+  allow_failure: true

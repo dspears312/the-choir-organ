@@ -8,6 +8,7 @@ import { parseODF } from './utils/odf-parser';
 import { renderNote } from './utils/renderer';
 import { readWav } from './utils/wav-reader';
 import { addToRecent, getRecents, saveOrganState, loadOrganState } from './utils/persistence';
+import { autoUpdater } from 'electron-updater';
 
 // needed in case process is undefined under Linux
 const platform = process.platform || os.platform();
@@ -16,6 +17,10 @@ const currentDir = fileURLToPath(new URL('.', import.meta.url));
 
 let mainWindow: BrowserWindow | undefined;
 let isCancellationRequested = false;
+
+// Configure autoUpdater
+autoUpdater.autoDownload = false; // We will let the user decide
+autoUpdater.autoInstallOnAppQuit = true;
 
 async function createWindow() {
   /**
@@ -221,12 +226,64 @@ ipcMain.handle('load-organ-state', async (event, odfPath) => {
   return loadOrganState(odfPath);
 });
 
-void app.whenReady().then(createWindow);
+// Update Handlers
+ipcMain.handle('check-for-updates', async () => {
+  try {
+    const result = await autoUpdater.checkForUpdates();
+    return result;
+  } catch (error: any) {
+    console.error('Check for updates error:', error);
+    return { error: error.message };
+  }
+});
+
+ipcMain.handle('download-update', async () => {
+  try {
+    await autoUpdater.downloadUpdate();
+    return { success: true };
+  } catch (error: any) {
+    console.error('Download update error:', error);
+    return { error: error.message };
+  }
+});
+
+ipcMain.handle('quit-and-install', () => {
+  autoUpdater.quitAndInstall();
+});
+
+// AutoUpdater Events
+autoUpdater.on('update-available', (info) => {
+  mainWindow?.webContents.send('update-available', info);
+});
+
+autoUpdater.on('update-not-available', (info) => {
+  mainWindow?.webContents.send('update-not-available', info);
+});
+
+autoUpdater.on('download-progress', (progressObj) => {
+  mainWindow?.webContents.send('update-download-progress', progressObj);
+});
+
+autoUpdater.on('update-downloaded', (info) => {
+  mainWindow?.webContents.send('update-downloaded', info);
+});
+
+autoUpdater.on('error', (err) => {
+  mainWindow?.webContents.send('update-error', err.message);
+});
+
+void app.whenReady().then(() => {
+  createWindow();
+  // Check for updates after a short delay on startup
+  setTimeout(() => {
+    autoUpdater.checkForUpdatesAndNotify().catch(err => {
+      console.error('Initial check for updates failed:', err);
+    });
+  }, 3000);
+});
 
 app.on('window-all-closed', () => {
-  if (platform !== 'darwin') {
-    app.quit();
-  }
+  app.quit();
 });
 
 app.on('activate', () => {

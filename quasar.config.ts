@@ -175,7 +175,7 @@ export default defineConfig((/* ctx */) => {
       // specify the debugging port to use for the Electron app when running in development mode
       inspectPort: 5858,
 
-      bundler: 'packager', // 'packager' or 'builder'
+      bundler: 'builder', // 'packager' or 'builder'
 
       packager: {
         // https://github.com/electron-userland/electron-packager/blob/master/docs/api.md#options
@@ -193,7 +193,23 @@ export default defineConfig((/* ctx */) => {
       builder: {
         // https://www.electron.build/configuration/configuration
 
-        appId: 'quasar-project'
+        appId: 'quasar-project',
+        publish: {
+          provider: 'generic',
+          url: 'https://gitlab.com/dspears312/the-choir-organ/-/releases'
+        },
+        linux: {
+          target: ['AppImage', 'snap'],
+          arch: ['x64', 'arm64']
+        },
+        win: {
+          target: ['nsis'],
+          arch: ['x64', 'arm64']
+        },
+        mac: {
+          target: ['dmg', 'zip'],
+          arch: ['universal']
+        }
       }
     },
 
