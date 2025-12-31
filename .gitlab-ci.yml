@@ -15,14 +15,12 @@ cache:
     - node_modules/
 
 before_script:
-  - curl -fsSL https://bun.sh/install | bash
-  - export PATH=$HOME/.bun/bin:$PATH
-  - bun install
+  - npm install
 
 build_linux:
   stage: build
   script:
-    - bun run build -- -P linux
+    - npm run build -- -P linux
   artifacts:
     paths:
       - dist/electron/Packaged/*linux*.AppImage
@@ -38,7 +36,7 @@ build_windows:
   stage: build
   image: electronuserland/builder:wine
   script:
-    - bun run build -- -P win
+    - npm run build -- -P win
   artifacts:
     paths:
       - dist/electron/Packaged/*win*.exe
@@ -54,7 +52,7 @@ build_macos:
   tags:
     - macos
   script:
-    - bun run build -- -P mac
+    - npm run build -- -P mac
   artifacts:
     paths:
       - dist/electron/Packaged/*mac*.dmg
