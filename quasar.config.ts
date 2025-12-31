@@ -198,9 +198,9 @@ export default defineConfig((/* ctx */) => {
           provider: 'github'
         },
         linux: {
+          category: 'Music',
           target: [
-            { target: 'AppImage', arch: ['x64', 'arm64'] },
-            { target: 'snap', arch: ['x64', 'arm64'] }
+            { target: 'AppImage', arch: ['x64', 'arm64'] }
           ]
         },
         win: {
@@ -209,9 +209,9 @@ export default defineConfig((/* ctx */) => {
           ]
         },
         mac: {
+          mergeASARs: true,
           target: [
-            { target: 'dmg', arch: ['universal'] },
-            { target: 'zip', arch: ['universal'] }
+            { target: 'dmg', arch: ['universal'] }
           ]
         }
       }
