@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld('myApi', {
     selectOdfFile: (path?: string) => ipcRenderer.invoke('select-odf-file', path),
     renderBank: (args: any) => ipcRenderer.invoke('render-bank', args),
     cancelRendering: () => ipcRenderer.invoke('cancel-rendering'),
+    readTextFile: (path: string) => ipcRenderer.invoke('read-text-file', path),
     readFileAsArrayBuffer: (path: string) => ipcRenderer.invoke('read-file-arraybuffer', path),
     selectFolder: () => ipcRenderer.invoke('select-folder'),
     getWavInfo: (path: string) => ipcRenderer.invoke('get-wav-info', path),

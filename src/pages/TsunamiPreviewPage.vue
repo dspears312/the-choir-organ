@@ -1,101 +1,182 @@
 <template>
-  <q-page class="tsunami-preview-page q-pa-lg text-white">
-    <div class="row items-center q-mb-lg">
-      <q-btn flat icon="arrow_back" label="Back to Organ Console" @click="$router.push('/')" color="amber"
-        class="font-cinzel" />
-      <q-space />
-      <div class="text-h4 font-cinzel text-amber-9">Tsunami Board Previewer</div>
-      <q-space />
-      <q-badge :color="midiStatusColor" :label="`MIDI: ${organStore.midiStatus}`" class="q-px-md q-py-xs" />
+  <q-page class="tsunami-preview-page text-white column no-wrap">
+    <!-- Header (Aligned with IndexPage) -->
+    <div class="console-header row items-center justify-between q-py-md q-px-md col-auto">
+      <div class="row items-center">
+        <q-btn flat round icon="arrow_back" color="grey-6" @click="$router.push('/')" class="q-mr-md" />
+        <div class="text-h4 font-cinzel text-amber-8 text-shadow">Tsunami Board Preview</div>
+      </div>
+
+      <div class="row items-center q-gutter-x-lg">
+        <!-- Standardized MIDI Status -->
+        <div class="status-indicator row items-center q-gutter-x-xs cursor-pointer hover-opacity-100 q-mr-sm"
+          @click="organStore.initMIDI" :class="{ 'opacity-50': organStore.midiStatus !== 'Connected' }">
+          <q-icon name="circle" :color="midiStatusColor" size="12px" />
+          <span class="text-caption text-uppercase tracking-wide">MIDI {{ organStore.midiStatus }}</span>
+          <q-tooltip class="bg-grey-10 text-amber shadow-4">
+            <div v-if="organStore.midiStatus === 'Connected'">MIDI Connected & Ready</div>
+            <div v-else-if="organStore.midiStatus === 'Error'">
+              <strong>MIDI Error:</strong> {{ organStore.midiError || 'Unknown Error' }}<br />
+              Click to retry connection
+            </div>
+            <div v-else>MIDI Disconnected. Click to retry connection.</div>
+          </q-tooltip>
+        </div>
+      </div>
     </div>
 
-    <div class="row q-col-gutter-lg">
-      <!-- Sidebar Controls -->
-      <div class="col-12 col-md-4">
-        <div class="preview-panel q-pa-md shadow-10">
-          <div class="text-h6 q-mb-md text-amber font-cinzel">Folder Configuration</div>
-          <q-btn color="amber" label="Select Rendered Folder" icon="folder_open" class="full-width q-mb-md text-black"
-            @click="selectFolder" />
+    <!-- Main Body (Flex Row) -->
+    <div class="console-body col row no-wrap overflow-hidden">
+      <!-- Left: Sidebar Controls (Fixed Width) -->
+      <div class="col-auto bg-dark-sidebar column no-wrap border-right" style="width: 350px;">
+        <div class="q-pa-md col column no-wrap">
+          <div class="col-auto">
+            <!-- <div class="text-h6 q-mb-md text-amber font-cinzel text-center border-bottom-amber">Folder Configuration
+            </div> -->
 
-          <div v-if="folderPath" class="folder-shelf q-pa-sm rounded-borders q-mb-md">
-            <div class="text-caption text-grey-4">Active Path:</div>
-            <div class="text-subtitle2 text-amber break-all">{{ folderPath }}</div>
+            <!-- Drive Picker -->
+            <div class="q-mb-md">
+              <div class="text-caption text-grey-6 q-mb-xs">Source Device</div>
+              <div v-if="organStore.availableDrives.length > 0" class="drive-picker q-gutter-y-xs">
+                <div v-for="drive in organStore.availableDrives" :key="drive.mountPoint"
+                  class="drive-item q-pa-sm rounded-borders cursor-pointer row items-center no-wrap"
+                  :class="{ 'drive-selected': folderPath === drive.mountPoint }" @click="selectDrive(drive)">
+                  <q-icon
+                    :name="(drive.volumeName === 'TCO' || drive.volumeName === organStore.targetVolumeLabel) ? 'sd_card' : 'usb'"
+                    :color="(drive.volumeName === 'TCO' || drive.volumeName === organStore.targetVolumeLabel) ? 'amber' : 'grey-5'"
+                    size="sm" class="q-mr-sm" />
+                  <div class="col overflow-hidden">
+                    <div class="text-caption text-weight-bold ellipsis">{{ drive.volumeName || 'Untitled' }}</div>
+                    <div class="text-xs text-grey-6 ellipsis">{{ drive.mountPoint }}</div>
+                  </div>
+                  <q-icon v-if="folderPath === drive.mountPoint" name="check_circle" color="amber" size="xs" />
+                </div>
+              </div>
+              <div v-else class="q-pa-md bg-black-50 rounded-borders text-center border-amber-muted">
+                <q-icon name="info" color="grey-7" size="sm" class="q-mb-xs" />
+                <div class="text-xs text-grey-6 italic">No removable drives detected</div>
+              </div>
 
-            <!-- Bank Selector -->
-            <div v-if="availableBanks.length > 0" class="q-mt-sm border-top q-pt-sm">
-              <div class="text-caption text-grey-4 q-mb-xs">Select Bank:</div>
-              <div class="row q-gutter-xs">
-                <div v-for="b in availableBanks" :key="b" class="bank-chip cursor-pointer"
-                  :class="{ 'active': selectedBank === b }" @click="selectedBank = b">
-                  {{ b }}
+              <q-btn color="grey" label="Select Local Folder" icon="folder_open"
+                class="full-width q-mt-md text-amber-7 font-cinzel text-caption" outline @click="selectFolder" />
+            </div>
+          </div>
+
+          <!-- Active Path (Hidden if matching a drive) -->
+          <div v-if="folderPath && isLocalFolder" class="folder-shelf q-pa-sm rounded-borders q-mb-md col-auto">
+            <div v-if="route.query.folder" class="row items-center justify-between q-mb-xs">
+              <div class="text-caption text-grey-6">Active Path:</div>
+              <q-btn flat dense icon="refresh" color="grey-6" size="sm" @click="scanForBanks">
+                <q-tooltip>Refresh Folder</q-tooltip>
+              </q-btn>
+            </div>
+            <div v-else class="text-caption text-grey-6">Active Path:</div>
+
+            <div class="row items-center no-wrap">
+              <div class="text-xs text-amber break-all dir-path col">{{ folderPath }}</div>
+              <q-btn v-if="!route.query.folder" flat round dense icon="refresh" color="grey-6" size="sm"
+                @click="scanForBanks" class="q-ml-xs">
+                <q-tooltip>Refresh Folder</q-tooltip>
+              </q-btn>
+            </div>
+          </div>
+
+          <!-- Bank Selector - Expanded to Fill Height -->
+          <div v-if="folderPath && availableBanks.length > 0" class="col column no-wrap q-mt-sm">
+            <div class="text-caption text-grey-6 q-mb-xs">Select Bank:</div>
+            <div
+              class="bank-list-container bg-black rounded-borders overflow-hidden border-amber-muted col column no-wrap">
+              <q-scroll-area class="col"
+                :thumb-style="{ width: '4px', borderRadius: '4px', background: '#d4af37', opacity: '0.4' }">
+                <q-list dark padding dense class="q-py-none">
+                  <q-item v-for="b in availableBanks" :key="b" clickable v-ripple :active="selectedBank === b"
+                    active-class="bank-item-active" class="bank-item-dense" @click="selectedBank = b">
+                    <q-item-section avatar class="min-width-auto q-pr-sm">
+                      <div class="bank-index-label">{{ b }}</div>
+                    </q-item-section>
+                    <q-item-section>
+                      <q-item-label class="text-xs ellipsis">{{ bankNames[b] || `Bank ${b}` }}</q-item-label>
+                    </q-item-section>
+                    <q-item-section side v-if="selectedBank === b">
+                      <q-icon name="play_arrow" color="amber" size="xs" />
+                    </q-item-section>
+                  </q-item>
+                </q-list>
+              </q-scroll-area>
+            </div>
+          </div>
+          <div v-else-if="folderPath && !processingMessage" class="text-caption text-red-5 q-mt-sm italic col-auto">
+            No valid bank files found (NNNN.wav)
+          </div>
+
+          <!-- Voice counters at bottom -->
+          <div class="q-mt-auto q-pt-md">
+            <div class="row q-col-gutter-md">
+              <div class="col-6">
+                <div class="stat-box-mini text-center shadow-24">
+                  <div class="text-h4 text-amber-7 font-cinzel">{{ activeNotes.size }}</div>
+                  <div class="text-caption text-grey-6 text-uppercase tracking-widest" style="font-size: 0.6rem;">
+                    Voices</div>
+                </div>
+              </div>
+              <div class="col-6">
+                <div class="stat-box-mini text-center shadow-24">
+                  <div class="text-h4 font-cinzel" :class="activeNotes.size >= 16 ? 'text-red-8' : 'text-blue-8'">
+                    16</div>
+                  <div class="text-caption text-grey-6 text-uppercase tracking-widest" style="font-size: 0.6rem;">
+                    Max Limit</div>
                 </div>
               </div>
             </div>
-            <div v-else class="text-caption text-red q-mt-sm">No valid bank files found (NNNN.wav)</div>
-          </div>
-
-          <div class="q-mt-xl">
-            <div class="text-subtitle2 text-grey-5 q-mb-sm">Simulation Physics</div>
-            <q-banner dense class="bg-grey-10 text-amber-2 rounded-borders q-mb-md">
-              <template v-slot:avatar>
-                <q-icon name="memory" />
-              </template>
-              32-voice hard polyphony cutoff (Tsunami Board accuracy).
-            </q-banner>
-
-            <q-list dark padding class="bg-black rounded-borders">
-              <q-item-label header class="text-grey-7">Tsunami Rules</q-item-label>
-              <q-item dense>
-                <q-item-section avatar><q-icon name="check" color="green" size="xs" /></q-item-section>
-                <q-item-section>Note 36 maps to Track 001_L1</q-item-section>
-              </q-item>
-              <q-item dense>
-                <q-item-section avatar><q-icon name="check" color="green" size="xs" /></q-item-section>
-                <q-item-section>Immediate hard voice stealing</q-item-section>
-              </q-item>
-            </q-list>
           </div>
         </div>
       </div>
 
-      <!-- Main Playback Area -->
-      <div class="col-12 col-md-8">
-        <div class="preview-panel q-pa-lg shadow-20">
-          <div class="row items-center q-mb-md">
-            <div class="text-h5 text-amber font-cinzel">Real-time Note Monitor</div>
-            <q-space />
-            <div v-if="samplesLoaded" class="text-positive row items-center">
-              <q-icon name="check_circle" class="q-mr-xs" /> Ready to Play
+      <!-- Right: Main Playback Area (Scrollable Visualizer) -->
+      <div class="col column no-wrap overflow-hidden bg-black">
+        <q-scroll-area class="col q-pa-xl">
+          <div class="preview-container max-width-center">
+            <div class="row items-center q-mb-xl">
+              <div class="column">
+                <div class="text-h4 text-amber-8 font-cinzel q-mb-xs">Real-time Note Monitor</div>
+                <div class="text-caption text-grey-7" v-if="folderPath">
+                  Monitoring: <span class="text-amber">{{ bankNames[selectedBank] || `Bank ${selectedBank}`
+                    }}</span>
+                  <span class="q-ml-sm opacity-50">(On-Demand Loading)</span>
+                </div>
+              </div>
+              <q-space />
+              <div v-if="folderPath" class="text-green-5 row items-center">
+                <span class="text-overline text-weight-bold">Ready</span>
+              </div>
+              <div v-else-if="processingMessage" class="text-amber-5 row items-center animate-pulse">
+                <span class="text-overline">{{ processingMessage }}</span>
+                <q-spinner-dots class="q-ml-sm" size="sm" />
+              </div>
+              <div v-else class="text-grey-7 italic">Waiting for folder selection...</div>
             </div>
-            <div v-else class="text-grey-7">Waiting for folder...</div>
-          </div>
 
-          <div class="note-visualizer-container bg-black rounded-borders shadow-inset q-pa-xl">
-            <div class="text-center" v-if="!samplesLoaded">
-              <q-icon name="queue_music" size="100px" color="grey-9" />
-              <div class="text-h6 text-grey-8 q-mt-md">Select a Tsunami Render folder to start monitoring</div>
-            </div>
-            <div v-else class="playback-grid">
-              <div class="row q-gutter-md justify-center">
-                <div v-for="n in 61" :key="n" :class="{ 'note-active': activeNotes.has(35 + n) }" class="note-box">
-                  <div class="note-id">{{ 35 + n }}</div>
-                  <div class="track-label">{{ (n).toString().padStart(3, '0') }}</div>
+            <div class="note-visualizer-container bg-dark-panel rounded-borders shadow-inset q-pa-xl">
+              <div class="text-center" v-if="!folderPath && !processingMessage">
+                <q-icon name="queue_music" size="100px" color="grey-9" />
+                <div class="text-h6 text-grey-8 q-mt-md font-cinzel">Select a Tsunami Render folder to start monitoring
+                </div>
+              </div>
+              <div class="text-center" v-else-if="processingMessage">
+                <q-spinner-puff size="100px" color="amber-8" />
+                <div class="text-h6 text-amber-8 q-mt-md font-cinzel">{{ processingMessage }}</div>
+              </div>
+              <div v-else class="playback-grid">
+                <div class="row q-gutter-md justify-center">
+                  <div v-for="n in 61" :key="n" :class="{ 'note-active': activeNotes.has(35 + n) }" class="note-box">
+                    <div class="note-id">{{ 35 + n }}</div>
+                    <div class="track-label">{{ (n).toString().padStart(4, '0') }}</div>
+                  </div>
                 </div>
               </div>
             </div>
           </div>
-
-          <div class="q-mt-xl row items-center justify-center q-gutter-lg">
-            <div class="stat-box text-center">
-              <div class="text-h3 text-amber-7">{{ activeNotes.size }}</div>
-              <div class="text-caption text-grey-6 uppercase">Active Voices</div>
-            </div>
-            <div class="stat-box text-center">
-              <div class="text-h3" :class="activeNotes.size >= 32 ? 'text-red' : 'text-blue'">32</div>
-              <div class="text-caption text-grey-6 uppercase">Polyphony Max</div>
-            </div>
-          </div>
-        </div>
+        </q-scroll-area>
       </div>
     </div>
   </q-page>
@@ -105,132 +186,151 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import { useOrganStore } from 'src/stores/organ';
 import { tsunamiPlayer } from 'src/services/tsunami-player';
+import { useRoute } from 'vue-router';
 
 const organStore = useOrganStore();
+const route = useRoute();
+
 const folderPath = ref('');
-const samplesLoaded = ref(false);
+const processingMessage = ref('');
 const activeNotes = ref(new Set<number>());
-const keysDown = new Set<number>(); // Physical key state
+const keysDown = new Set<number>();
 const availableBanks = ref<number[]>([]);
-const selectedBank = ref<number>(0);
+const selectedBank = ref<number>(-1);
+const bankNames = ref<Record<number, string>>({});
+
+const isLocalFolder = computed(() => {
+  if (!folderPath.value) return false;
+  return !organStore.availableDrives.some(d => d.mountPoint === folderPath.value);
+});
 
 const midiStatusColor = computed(() => {
-  if (organStore.midiStatus === 'Connected') return 'green';
-  if (organStore.midiStatus === 'Error') return 'red';
+  if (organStore.midiStatus === 'Connected') return 'green-5';
+  if (organStore.midiStatus === 'Error') return 'red-5';
   return 'grey-7';
 });
 
-import { useRoute } from 'vue-router';
-const route = useRoute();
-
-const midiAccess = ref<MIDIAccess | null>(null);
+let drivePollInterval: any = null;
 
 onMounted(async () => {
-  if (navigator.requestMIDIAccess) {
-    midiAccess.value = await navigator.requestMIDIAccess();
-    midiAccess.value.inputs.forEach(input => {
-      input.addEventListener('midimessage', handleMIDI);
-    });
-  }
+  // Disable synth while in Tsunami Preview mode
+  organStore.isSynthEnabled = false;
 
-  // Auto-load from query or store
+  // Start drive polling if not already started
+  organStore.fetchDrives();
+  drivePollInterval = setInterval(() => {
+    organStore.fetchDrives();
+  }, 5000);
+
+  // Initialize MIDI via global store
+  await organStore.initMIDI();
+
+  // Attach our own listener for Tsunami playback
+  attachMidiListeners();
+
+  // Watch for MIDI access changes (e.g. reconnect)
+  watch(() => organStore.midiAccess, () => {
+    attachMidiListeners();
+  });
+
+  // Auto-load from query or store outputDir
   const queryFolder = route.query.folder as string;
   if (queryFolder) {
     folderPath.value = queryFolder;
-    await scanForBanks();
-    if (availableBanks.value.length > 0) {
-      selectedBank.value = availableBanks.value[0] || 0;
-      await loadTsunamiSamples();
-    }
+  } else if (organStore.outputDir) {
+    folderPath.value = organStore.outputDir;
   }
 });
+
+function attachMidiListeners() {
+  if (organStore.midiAccess) {
+    organStore.midiAccess.inputs.forEach(input => {
+      input.removeEventListener('midimessage', handleMIDI);
+      input.addEventListener('midimessage', handleMIDI);
+    });
+  }
+}
 
 async function selectFolder() {
   const result = await (window as any).myApi.selectFolder();
   if (result) {
     folderPath.value = result;
-    await scanForBanks();
-    if (availableBanks.value.length > 0) {
-      selectedBank.value = availableBanks.value[0] || 0;
-      await loadTsunamiSamples();
-    }
   }
+}
+
+function selectDrive(drive: any) {
+  folderPath.value = drive.mountPoint;
 }
 
 async function scanForBanks() {
   if (!folderPath.value) return;
-  const files = await (window as any).myApi.listDir(folderPath.value) as string[];
-  const banks = new Set<number>();
+  processingMessage.value = 'Indexing banks...';
+  try {
+    const files = await (window as any).myApi.listDir(folderPath.value);
+    const bankSet = new Set<number>();
+    files.forEach((f: string) => {
+      const match = f.match(/^(\d{4})\.wav$/i);
+      if (match) {
+        const trackNum = parseInt(match[1] as string, 10);
+        const bankNum = Math.floor(trackNum / 128);
+        bankSet.add(bankNum);
+      }
+    });
+    availableBanks.value = Array.from(bankSet).sort((a, b) => a - b);
 
-  files.forEach(file => {
-    // Match NNNN.wav
-    const match = file.match(/^(\d{4})\.wav$/i);
-    if (match) {
-      const num = parseInt(match[1], 10);
-      // Derive bank: floor(num / 128)
-      const bank = Math.floor(num / 128);
-      banks.add(bank);
+    // Load bank names from tco.txt
+    const tcoPath = `${folderPath.value}/tco.txt`;
+    const tcoContent = await (window as any).myApi.readTextFile(tcoPath);
+    if (tcoContent) {
+      const names: Record<number, string> = {};
+      tcoContent.split('\n').forEach((line: string) => {
+        const match = line.match(/^(\d+):\s*(.*)$/);
+        if (match) {
+          names[parseInt(match[1] as string, 10)] = match[2] as string;
+        }
+      });
+      bankNames.value = names;
     }
-  });
 
-  availableBanks.value = Array.from(banks).sort((a, b) => a - b);
+    if (availableBanks.value.length > 0 && selectedBank.value === -1) {
+      selectedBank.value = availableBanks.value[0] as number;
+    }
+  } finally {
+    processingMessage.value = '';
+  }
 }
 
-watch(selectedBank, () => {
+watch(folderPath, () => {
   if (folderPath.value) {
-    loadTsunamiSamples();
+    scanForBanks();
   }
 });
 
-async function loadTsunamiSamples() {
+watch(selectedBank, () => {
+  // Clearing cache is no longer needed with streaming slots
+});
+
+async function handleMIDI(event: any) {
   if (!folderPath.value) return;
-  samplesLoaded.value = false;
-
-  const promises = [];
-  // For the selected bank, we load notes 36-96
-  // File number = note + (bank * 128)
-  const bankOffset = selectedBank.value * 128;
-
-  for (let note = 36; note < 97; note++) {
-    const fileNum = note + bankOffset;
-    const fileName = `${fileNum.toString().padStart(4, '0')}.wav`;
-    const fullPath = `${folderPath.value}/${fileName}`;
-
-    // We load it with a key that is just the Note number, since we only play one bank at a time
-    // ACTUALLY, to allow switching banks quickly, maybe we should cache everything?
-    // But tsunamiPlayer is simple. Let's just key it by Note for the *current* bank.
-    // Or better, key it by File Number to allow multiple banks loaded?
-    // User requested "split them up into banks automatically... Add a bank selector".
-    // If I select Bank 1, and press Note 36, I expect the sound for (36 + 128) to play.
-    // So the key in the player should probably be the file number, or I need to update handleMIDI calls.
-    // Let's use File Number as key.
-
-    promises.push(tsunamiPlayer.loadSample(fileNum.toString(), fullPath));
-  }
-
-  await Promise.all(promises);
-  samplesLoaded.value = true;
-}
-
-function handleMIDI(event: any) {
-  if (!samplesLoaded.value) return;
   const [status, note, velocity] = event.data;
   const type = status & 0xf0;
 
-  // Calculate target file number based on current bank
   const fileNum = note + (selectedBank.value * 128);
   const key = fileNum.toString();
 
   if (type === 144 && velocity > 0) {
     keysDown.add(note);
-    tsunamiPlayer.playNote(note, key);
     activeNotes.value.add(note);
+
+    const fileName = `${fileNum.toString().padStart(4, '0')}.wav`;
+    const fullPath = `${folderPath.value}/${fileName}`;
+
+    // On-demand stream (Simulates hardware streaming)
+    tsunamiPlayer.playNote(note, fullPath);
   } else if (type === 128 || (type === 144 && velocity === 0)) {
     keysDown.delete(note);
     tsunamiPlayer.stopNote(note);
-    // Delay removal from UI to match 50ms fade-out
     setTimeout(() => {
-      // Only delete if the note is not currently being played (pressed) again
       if (!keysDown.has(note)) {
         activeNotes.value.delete(note);
       }
@@ -239,8 +339,15 @@ function handleMIDI(event: any) {
 }
 
 onUnmounted(() => {
-  if (midiAccess.value) {
-    midiAccess.value.inputs.forEach(input => {
+  // Re-enable synth
+  organStore.isSynthEnabled = true;
+
+  if (drivePollInterval) {
+    clearInterval(drivePollInterval);
+  }
+
+  if (organStore.midiAccess) {
+    organStore.midiAccess.inputs.forEach(input => {
       input.removeEventListener('midimessage', handleMIDI);
     });
   }
@@ -251,14 +358,39 @@ onUnmounted(() => {
 <style lang="scss" scoped>
 .tsunami-preview-page {
   background: radial-gradient(circle at center, #111 0%, #050505 100%);
-  min-height: 100%;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 100%;
 }
 
-.preview-panel {
-  background: rgba(40, 40, 40, 0.4);
-  border: 1px solid #3d2b1f;
-  border-radius: 16px;
-  backdrop-filter: blur(10px);
+.console-header {
+  background: linear-gradient(to bottom, #111, #080808);
+  border-bottom: 4px solid #332211;
+  box-shadow: 0 5px 20px rgba(0, 0, 0, 0.5);
+  z-index: 10;
+}
+
+.bg-dark-sidebar {
+  background: #0f0f0f;
+}
+
+.bg-dark-panel {
+  background: #080808;
+}
+
+.border-right {
+  border-right: 2px solid #332211;
+}
+
+.border-bottom-amber {
+  border-bottom: 2px solid #664422;
+  display: inline-block;
+  width: 100%;
+}
+
+.border-amber-muted {
+  border: 1px solid rgba(212, 175, 55, 0.2);
 }
 
 .folder-shelf {
@@ -267,10 +399,11 @@ onUnmounted(() => {
 }
 
 .note-visualizer-container {
-  min-height: 400px;
+  min-height: 450px;
   display: flex;
   align-items: center;
   justify-content: center;
+  border: 1px solid #222;
 }
 
 .shadow-inset {
@@ -299,6 +432,7 @@ onUnmounted(() => {
     font-size: 0.6rem;
     color: #555;
     margin-top: 4px;
+    font-family: monospace;
   }
 
   &.note-active {
@@ -317,44 +451,117 @@ onUnmounted(() => {
   }
 }
 
-.stat-box {
-  padding: 20px 40px;
-  background: #000;
-  border-radius: 12px;
-  border: 1px solid #333;
+.stat-box-mini {
+  padding: 12px;
+  background: #0a0a0a;
+  border-radius: 8px;
+  border: 1px solid #332211;
+}
+
+.bank-list-container {
+  background: #050505;
+}
+
+.bank-item-dense {
+  border-bottom: 1px solid #111;
+  transition: all 0.2s ease;
+
+  &:last-child {
+    border-bottom: none;
+  }
+
+  &.bank-item-active {
+    background: rgba(212, 175, 55, 0.2) !important;
+    border-color: rgba(212, 175, 55, 0.4);
+
+    .bank-index-label {
+      background: #d4af37;
+      color: black;
+      box-shadow: 0 0 10px rgba(212, 175, 55, 0.5);
+    }
+  }
+}
+
+.bank-index-label {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #1a1a1a;
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 10px;
+  color: #ffb300;
+  font-weight: bold;
+}
+
+.min-width-auto {
+  min-width: unset;
 }
 
 .font-cinzel {
   font-family: 'Cinzel', serif;
 }
 
+.text-shadow {
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.8);
+}
+
+.tracking-widest {
+  letter-spacing: 0.2em;
+}
+
 .break-all {
   word-break: break-all;
 }
 
-.bank-chip {
-  padding: 2px 8px;
-  background: #222;
-  border: 1px solid #444;
-  border-radius: 4px;
-  color: #888;
-  font-size: 0.8rem;
-  transition: all 0.2s;
-
-  &:hover {
-    border-color: #d4af37;
-    color: #ddd;
-  }
-
-  &.active {
-    background: #d4af37;
-    color: #000;
-    font-weight: bold;
-    border-color: #d4af37;
-  }
+.dir-path {
+  font-family: monospace;
+  opacity: 0.7;
 }
+
 
 .border-top {
   border-top: 1px solid #222;
+}
+
+.bg-black-50 {
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.max-width-center {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.drive-item {
+  background: rgba(40, 40, 40, 0.4);
+  border: 1px solid transparent;
+  transition: all 0.2s ease;
+
+  &:hover {
+    background: rgba(60, 60, 60, 0.6);
+    border-color: #444;
+  }
+
+  &.drive-selected {
+    background: rgba(212, 175, 55, 0.15);
+    border-color: rgba(212, 175, 55, 0.5);
+  }
+}
+
+.animate-fade {
+  animation: fadeIn 0.5s ease;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
 }
 </style>

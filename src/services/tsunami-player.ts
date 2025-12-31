@@ -1,153 +1,147 @@
-
-interface TsunamiVoice {
-    source: AudioBufferSourceNode;
+interface VoiceSlot {
+    audio: HTMLAudioElement;
+    source: MediaElementAudioSourceNode;
     gainNode: GainNode;
+    note: number | null;
     startTime: number;
-    note: number;
 }
 
 export class TsunamiPlayer {
     private context: AudioContext;
-    private buffers: Map<string, AudioBuffer> = new Map();
-    private activeVoices: Map<number, TsunamiVoice> = new Map(); // Map note -> voice
     private masterGain: GainNode;
-    private loadPromises: Map<string, Promise<void>> = new Map();
+    private slots: VoiceSlot[] = [];
+    private readonly MAX_VOICES = 16;
 
     constructor() {
         this.context = new (window.AudioContext || (window as any).webkitAudioContext)();
         this.masterGain = this.context.createGain();
-        this.masterGain.gain.value = 1.0; // Full volume
+        this.masterGain.gain.value = 1.0;
         this.masterGain.connect(this.context.destination);
-    }
 
-    async loadSample(trackKey: string, path: string): Promise<void> {
-        if (this.buffers.has(trackKey)) return;
-        if (this.loadPromises.has(trackKey)) return this.loadPromises.get(trackKey);
+        // Initialize pool of voice slots
+        for (let i = 0; i < this.MAX_VOICES; i++) {
+            const audio = new Audio();
+            audio.crossOrigin = 'anonymous'; // Important for media element source
+            const source = this.context.createMediaElementSource(audio);
+            const gainNode = this.context.createGain();
 
-        const promise = (async () => {
-            try {
-                const arrayBuffer = await (window as any).myApi.readFileAsArrayBuffer(path);
-                const audioBuffer = await this.context.decodeAudioData(arrayBuffer);
-                this.buffers.set(trackKey, audioBuffer);
-            } catch (e) {
-                console.error(`Failed to load tsunami sample: ${path}`, e);
-            } finally {
-                this.loadPromises.delete(trackKey);
-            }
-        })();
+            source.connect(gainNode);
+            gainNode.connect(this.masterGain);
 
-        this.loadPromises.set(trackKey, promise);
-        return promise;
-    }
-
-    playNote(note: number, trackKey: string) {
-        if (this.context.state === 'suspended') {
-            this.context.resume();
-        }
-
-        // Hard voice stealing for the same note
-        this.killNote(note);
-
-        // Global 32-voice limit
-        if (this.activeVoices.size >= 32) {
-            this.stealOldestVoice();
-        }
-
-        const buffer = this.buffers.get(trackKey);
-        if (!buffer) {
-            console.warn(`Buffer not found for key: ${trackKey}`);
-            return;
-        }
-
-        const gainNode = this.context.createGain();
-        gainNode.gain.value = 1.0;
-        gainNode.connect(this.masterGain);
-
-        const source = this.context.createBufferSource();
-        source.buffer = buffer;
-        source.loop = false;
-
-        source.connect(gainNode);
-        source.start();
-
-        const voice: TsunamiVoice = {
-            source,
-            gainNode,
-            startTime: this.context.currentTime,
-            note
-        };
-
-        source.onended = () => {
-            // Remove if this is still the active voice for this note
-            if (this.activeVoices.get(note) === voice) {
-                this.activeVoices.delete(note);
-            }
-        };
-
-        this.activeVoices.set(note, voice);
-    }
-
-    private stealOldestVoice() {
-        let oldestNote: number | null = null;
-        let earliestTime = Infinity;
-
-        this.activeVoices.forEach((voice, note) => {
-            if (voice.startTime < earliestTime) {
-                earliestTime = voice.startTime;
-                oldestNote = note;
-            }
-        });
-
-        if (oldestNote !== null) {
-            this.killNote(oldestNote);
+            this.slots.push({
+                audio,
+                source,
+                gainNode,
+                note: null,
+                startTime: 0
+            });
         }
     }
 
     /**
-     * Immediate cutoff of a note (no fade).
-     * Used for voice stealing and clearAll.
+     * Plays a note by streaming from the given path immediately.
+     */
+    playNote(note: number, path: string) {
+        if (this.context.state === 'suspended') {
+            this.context.resume();
+        }
+
+        // Kill any existing voice with the same note (re-trigger)
+        this.killNote(note);
+
+        // Find a free slot, or steal the oldest one
+        let slot: VoiceSlot | undefined = this.slots.find(s => s.note === null);
+        if (!slot) {
+            slot = this.stealOldestVoice() || undefined;
+        }
+
+        if (!slot) return; // Should not happen with steal logic
+
+        // Setup slot
+        slot.note = note;
+        slot.startTime = this.context.currentTime;
+        slot.gainNode.gain.cancelScheduledValues(slot.startTime);
+        slot.gainNode.gain.setValueAtTime(1.0, slot.startTime);
+
+        // Set source and play immediately (streaming)
+        const streamUrl = `tsunami://${path}`;
+        slot.audio.src = streamUrl;
+        slot.audio.play().catch(e => console.error('Tsunami stream error:', e));
+
+        // Clean up when finished naturally
+        const onEnded = () => {
+            if (slot.note === note) {
+                slot.note = null;
+            }
+            slot.audio.removeEventListener('ended', onEnded);
+        };
+        slot.audio.addEventListener('ended', onEnded);
+    }
+
+    private stealOldestVoice(): VoiceSlot | null {
+        let oldestSlot: VoiceSlot | null = null;
+        let earliestTime = Infinity;
+
+        for (const slot of this.slots) {
+            if (slot.startTime < earliestTime) {
+                earliestTime = slot.startTime;
+                oldestSlot = slot;
+            }
+        }
+
+        if (oldestSlot) {
+            this.killSlot(oldestSlot);
+            return oldestSlot;
+        }
+        return null;
+    }
+
+    /**
+     * Immediate cutoff of a note.
      */
     killNote(note: number) {
-        const voice = this.activeVoices.get(note);
-        if (voice) {
-            try {
-                voice.source.stop();
-                voice.source.disconnect();
-                voice.gainNode.disconnect();
-            } catch (e) {
-                // ignore
-            }
-            this.activeVoices.delete(note);
+        const slot = this.slots.find(s => s.note === note);
+        if (slot) {
+            this.killSlot(slot);
         }
+    }
+
+    private killSlot(slot: VoiceSlot) {
+        slot.audio.pause();
+        slot.audio.src = '';
+        slot.note = null;
     }
 
     /**
      * Stops a note with a 50ms fade-out.
      */
     stopNote(note: number) {
-        const voice = this.activeVoices.get(note);
-        if (voice) {
+        const slot = this.slots.find(s => s.note === note);
+        if (slot) {
             const fadeTime = 0.05; // 50ms
             const now = this.context.currentTime;
 
-            // Ramp down gain
-            voice.gainNode.gain.cancelScheduledValues(now);
-            voice.gainNode.gain.setValueAtTime(voice.gainNode.gain.value, now);
-            voice.gainNode.gain.linearRampToValueAtTime(0, now + fadeTime);
+            slot.gainNode.gain.cancelScheduledValues(now);
+            slot.gainNode.gain.setValueAtTime(slot.gainNode.gain.value, now);
+            slot.gainNode.gain.linearRampToValueAtTime(0, now + fadeTime);
 
-            // Schedule stop
-            voice.source.stop(now + fadeTime);
-
-            // We don't delete from activeVoices yet, because it still counts as a voice.
-            // source.onended will handle the cleanup.
+            setTimeout(() => {
+                if (slot.note === note) {
+                    this.killSlot(slot);
+                }
+            }, fadeTime * 1000 + 10);
         }
     }
 
     clearAll() {
-        this.activeVoices.forEach((_, note) => {
-            this.killNote(note);
-        });
-        this.activeVoices.clear();
+        for (const slot of this.slots) {
+            this.killSlot(slot);
+        }
+    }
+
+    // Compat helper for UI (active notes tracking is handled in Vue component)
+    getActiveVoiceCount(): number {
+        return this.slots.filter(s => s.note !== null).length;
     }
 }
 

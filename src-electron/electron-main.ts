@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, protocol, net } from 'electron';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -17,6 +17,20 @@ const { autoUpdater } = require('electron-updater');
 const platform = process.platform || os.platform();
 
 const currentDir = fileURLToPath(new URL('.', import.meta.url));
+
+// Register tsunami protocol as privileged for media streaming
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'tsunami',
+    privileges: {
+      stream: true,
+      bypassCSP: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true
+    }
+  }
+]);
 
 let mainWindow: BrowserWindow | undefined;
 let isCancellationRequested = false;
@@ -230,18 +244,16 @@ ipcMain.handle('cancel-rendering', () => {
   isCancellationRequested = true;
 });
 
-ipcMain.handle('render-bank', async (event, { bankNumber, combination, organData, outputDir: initialOutputDir }) => {
+ipcMain.handle('render-bank', async (event, { bankNumber, bankName, combination, organData, outputDir: initialOutputDir }) => {
   let outputDir = initialOutputDir;
   if (!outputDir) {
     const result = await dialog.showOpenDialog({
       properties: ['openDirectory'],
       title: 'Select Output Directory for Tsunami SD Card'
     });
-    if (result.canceled) return { status: 'cancelled' };
     outputDir = result.filePaths[0];
+    if (!outputDir) return { status: 'error', message: 'No output directory selected' };
   }
-
-  if (!outputDir) return { status: 'error', message: 'No output directory selected' };
 
   isCancellationRequested = false;
   const notes = Array.from({ length: 61 }, (_, i) => 36 + i);
@@ -314,7 +326,47 @@ ipcMain.handle('render-bank', async (event, { bankNumber, combination, organData
     await new Promise(resolve => setImmediate(resolve));
   }
 
+  // Update tco.txt with bank name - MOVE TO END
+  try {
+    const tcoPath = path.join(outputDir, 'tco.txt');
+    let tcoContent = '';
+    if (fs.existsSync(tcoPath)) {
+      tcoContent = fs.readFileSync(tcoPath, 'utf8');
+    }
+
+    const lines = tcoContent.split('\n').filter(l => l.trim());
+    const bankMap: Record<number, string> = {};
+    lines.forEach(line => {
+      const match = line.match(/^(\d+):\s*(.*)$/);
+      if (match) {
+        bankMap[parseInt(match[1] as string, 10)] = match[2] as string;
+      }
+    });
+
+    bankMap[bankNumber] = bankName || `Bank ${bankNumber + 1}`;
+
+    const sortedContent = Object.keys(bankMap)
+      .map(Number)
+      .sort((a, b) => a - b)
+      .map(idx => `${idx}: ${bankMap[idx]}`)
+      .join('\n');
+
+    fs.writeFileSync(tcoPath, sortedContent);
+  } catch (e) {
+    console.error('Failed to update tco.txt', e);
+  }
+
   return { status: 'success', outputDir };
+});
+
+ipcMain.handle('read-text-file', async (event, filePath: string) => {
+  try {
+    if (!fs.existsSync(filePath)) return null;
+    return fs.readFileSync(filePath, 'utf8');
+  } catch (e) {
+    console.error(`Failed to read text file: ${filePath}`, e);
+    return null;
+  }
 });
 
 ipcMain.handle('read-file-arraybuffer', async (event, filePath: string) => {
@@ -481,6 +533,24 @@ autoUpdater.on('error', (err: any) => {
 });
 
 void app.whenReady().then(() => {
+  // Protocol for streaming local tsunami samples
+  protocol.handle('tsunami', (request) => {
+    const url = new URL(request.url);
+    const filePath = decodeURIComponent(url.pathname);
+    console.log('Tsunami Stream Request:', { url: request.url, filePath });
+
+    try {
+      if (!fs.existsSync(filePath)) {
+        console.warn(`File not found for tsunami stream: ${filePath}`);
+        return new Response('File not found', { status: 404 });
+      }
+      return net.fetch('file://' + filePath);
+    } catch (e) {
+      console.error('Tsunami protocol error:', e);
+      return new Response('Error', { status: 500 });
+    }
+  });
+
   createWindow();
   // Check for updates after a short delay on startup
   setTimeout(() => {

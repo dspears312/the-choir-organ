@@ -37,6 +37,8 @@ export const useOrganStore = defineStore('organ', {
         renderStatus: '',
         isRestoring: false,
         midiAccess: null as MIDIAccess | null,
+        midiError: '' as string,
+        isSynthEnabled: true,
         virtualStops: [] as VirtualStop[],
         suppressDiskWarning: false,
         isOutputRemovable: false,
@@ -186,8 +188,10 @@ export const useOrganStore = defineStore('organ', {
         },
 
         initMIDI() {
+            this.midiError = '';
             if (!navigator.requestMIDIAccess) {
                 this.midiStatus = 'Error';
+                this.midiError = 'Web MIDI API not supported in this browser.';
                 return;
             }
             if (this.midiAccess) {
@@ -200,22 +204,24 @@ export const useOrganStore = defineStore('organ', {
                     this.midiStatus = access.inputs.size > 0 ? 'Connected' : 'Disconnected';
                 };
                 access.inputs.forEach((input) => {
-                    input.onmidimessage = (message) => this.handleMIDIMessage(message);
+                    input.addEventListener('midimessage', this.handleMIDIMessage);
                 });
-            }).catch(() => {
+            }).catch((err) => {
                 this.midiStatus = 'Error';
+                this.midiError = err.message || 'Failed to access MIDI devices.';
             });
         },
 
         stopMIDI() {
             if (this.midiAccess) {
                 this.midiAccess.inputs.forEach((input) => {
-                    input.onmidimessage = null;
+                    input.removeEventListener('midimessage', this.handleMIDIMessage);
                 });
                 this.midiAccess.onstatechange = null;
                 this.midiAccess = null;
             }
             this.midiStatus = 'Disconnected';
+            this.midiError = '';
         },
 
         async handleMIDIMessage(event: any) {
@@ -224,14 +230,18 @@ export const useOrganStore = defineStore('organ', {
 
             if (type === 144 && velocity > 0) { // Note On
                 this.activeMidiNotes.add(note);
-                this.currentCombination.forEach(async (stopId) => {
-                    await this.playPipe(note, stopId);
-                });
+                if (this.isSynthEnabled) {
+                    this.currentCombination.forEach(async (stopId) => {
+                        await this.playPipe(note, stopId);
+                    });
+                }
             } else if (type === 128 || (type === 144 && velocity === 0)) { // Note Off
                 this.activeMidiNotes.delete(note);
-                this.currentCombination.forEach(stopId => {
-                    synth.noteOff(note, stopId);
-                });
+                if (this.isSynthEnabled) {
+                    this.currentCombination.forEach(stopId => {
+                        synth.noteOff(note, stopId);
+                    });
+                }
             }
         },
 
@@ -395,14 +405,18 @@ export const useOrganStore = defineStore('organ', {
 
             contentToTurnOff.forEach(id => {
                 this.currentCombination = this.currentCombination.filter(x => x !== id);
-                this.activeMidiNotes.forEach(note => synth.noteOff(note, id));
+                if (this.isSynthEnabled) {
+                    this.activeMidiNotes.forEach(note => synth.noteOff(note, id));
+                }
             });
 
             contentToTurnOn.forEach(id => {
                 if (!this.currentCombination.includes(id)) {
                     this.currentCombination.push(id);
-                    this.preloadStopSamples(id);
-                    this.activeMidiNotes.forEach(note => this.playPipe(note, id));
+                    if (this.isSynthEnabled) {
+                        this.preloadStopSamples(id);
+                        this.activeMidiNotes.forEach(note => this.playPipe(note, id));
+                    }
                 }
             });
         },
@@ -536,6 +550,7 @@ export const useOrganStore = defineStore('organ', {
 
                 const payload = {
                     bankNumber,
+                    bankName: bank.name,
                     combination: [...bank.combination],
                     organData: {
                         name: this.organData.name,

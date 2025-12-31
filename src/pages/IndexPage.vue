@@ -43,9 +43,18 @@
         <div class="text-h4 font-cinzel text-amber-8 text-shadow">{{ organStore.organData.name }}</div>
 
         <div class="row items-center q-gutter-x-lg">
-          <div class="status-indicator row items-center q-gutter-x-sm">
+          <div class="status-indicator row items-center q-gutter-x-sm cursor-pointer hover-opacity-100"
+            @click="organStore.initMIDI" :class="{ 'opacity-50': organStore.midiStatus !== 'Connected' }">
             <q-icon name="circle" :color="midiColor" size="12px" />
             <span class="text-caption text-uppercase tracking-wide">MIDI {{ organStore.midiStatus }}</span>
+            <q-tooltip class="bg-grey-10 text-amber shadow-4">
+              <div v-if="organStore.midiStatus === 'Connected'">MIDI Connected & Ready</div>
+              <div v-else-if="organStore.midiStatus === 'Error'">
+                <strong>MIDI Error:</strong> {{ organStore.midiError || 'Unknown Error' }}<br />
+                Click to retry connection
+              </div>
+              <div v-else>MIDI Disconnected. Click to retry connection.</div>
+            </q-tooltip>
           </div>
 
           <q-separator vertical color="grey-9" />
@@ -176,8 +185,9 @@
             </q-list>
           </q-scroll-area>
 
-          <!-- Bottom Action Area (Fixed) -->
-          <div class="q-pa-md bg-dark-sidebar border-top-amber column q-gutter-y-sm shadow-up-10" style="z-index: 5;">
+          <!-- Bank Actions (Immediately following list) -->
+          <div class="q-pa-md bg-dark-sidebar  column">
+            <!-- <div class="text-overline text-grey-6" style="line-height: 1">Bank Actions</div> -->
             <div class="row q-gutter-x-sm">
               <q-btn color="amber" text-color="black" icon-right="add" label="Save to New"
                 class="col font-cinzel text-caption" :disable="organStore.banks.length >= 32" @click="addNewBank">
@@ -188,85 +198,95 @@
                 class="col font-cinzel text-caption" outline :disable="!organStore.banks[selectedBank]"
                 @click="organStore.saveToBank(selectedBank)" />
             </div>
+          </div>
 
-            <q-separator color="grey-9" class="q-my-sm" />
+          <!-- Bottom Action Area (Export) -->
+          <div class="q-pa-md q-pb-lg bg-dark-sidebar border-top-amber column shadow-up-10" style="z-index: 5;">
+            <div class="text-overline text-amber-9" style="line-height: 1">Tsunami Export</div>
 
-            <div class="row q-gutter-x-sm">
-              <q-btn color="red-10" :label="organStore.isOutputRemovable ? 'Burn to Card' : 'Copy to Folder'"
-                class="col font-cinzel q-py-sm shadow-10" :loading="organStore.isRendering"
-                :disable="organStore.banks.length === 0" @click="handleRenderClick"
-                :icon-right="organStore.isOutputRemovable ? 'sd_card' : 'folder'">
-              </q-btn>
-            </div>
+            <div class="q-gutter-y-sm">
+              <!-- 1. Destination picker -->
+              <div v-if="!organStore.isRendering" class="output-destination-area column q-gutter-y-xs">
+                <div class="row items-center justify-between">
+                  <div class="text-caption text-grey-6">Target Device</div>
+                  <q-btn flat dense color="grey-6" icon="settings" size="xs"
+                    @click="showAdvancedDisk = !showAdvancedDisk">
+                    <q-tooltip>Advanced Options</q-tooltip>
+                  </q-btn>
+                </div>
 
-            <div v-if="organStore.isRendering" class="q-mt-sm">
-              <div class="text-caption text-amber text-center q-mb-xs">
-                {{ organStore.renderStatus || 'Rendering...' }}
+                <!-- Drive Picker -->
+                <div v-if="!showAdvancedDisk" class="drive-picker q-gutter-y-xs">
+                  <div v-for="drive in organStore.availableDrives" :key="drive.mountPoint"
+                    class="drive-item q-pa-sm rounded-borders cursor-pointer row items-center no-wrap"
+                    :class="{ 'drive-selected': organStore.outputDir === drive.mountPoint }"
+                    @click="selectDrive(drive)">
+                    <q-icon
+                      :name="(drive.volumeName === 'TCO' || drive.volumeName === organStore.targetVolumeLabel) ? 'sd_card' : 'usb'"
+                      :color="(drive.volumeName === 'TCO' || drive.volumeName === organStore.targetVolumeLabel) ? 'amber' : 'grey-5'"
+                      size="sm" class="q-mr-sm" />
+                    <div class="col overflow-hidden">
+                      <div class="text-caption text-weight-bold ellipsis">{{ drive.volumeName || 'Untitled' }}</div>
+                      <div class="text-xs text-grey-6 ellipsis">{{ drive.mountPoint }}</div>
+                    </div>
+                    <q-icon v-if="organStore.outputDir === drive.mountPoint" name="check_circle" color="amber"
+                      size="xs" />
+                  </div>
+
+                  <div v-if="organStore.availableDrives.length === 0"
+                    class="text-center q-pa-md border-dashed rounded-borders text-grey-7 italic text-xs">
+                    No removable drives detected
+                  </div>
+
+                  <q-btn v-if="organStore.availableDrives.length === 0 || showAdvancedDisk" outline color="amber-7"
+                    icon="folder_open" label="Select Target Folder" class="full-width q-mt-sm font-cinzel text-xs"
+                    @click="organStore.setOutputDir" />
+                </div>
+
+                <!-- Advanced Folder View -->
+                <div v-if="showAdvancedDisk"
+                  class="advanced-folder q-pa-sm rounded-borders bg-black-50 border-amber-muted">
+                  <div class="row items-center justify-between q-mb-xs">
+                    <div class="text-caption text-amber-8">Selected Path</div>
+                    <q-btn flat dense color="amber-7" icon="folder_open" size="xs" @click="organStore.setOutputDir" />
+                  </div>
+                  <div class="text-xs text-grey-5 ellipsis dir-path">
+                    {{ organStore.outputDir || 'Not selected' }}
+                  </div>
+                </div>
               </div>
-              <q-linear-progress :value="organStore.renderProgress" color="amber" size="8px" rounded
-                class="q-linear-progress--animate" />
-              <div class="row items-center justify-between">
-                <div class="text-xs text-grey-6">{{ Math.round(organStore.renderProgress * 100) }}%</div>
-                <q-btn flat dense color="red-5" label="Cancel" size="sm" icon="close"
-                  @click="organStore.cancelRendering" />
-              </div>
-            </div>
 
-            <div v-if="!organStore.isRendering" class="output-destination-area q-mt-sm">
-              <div class="row items-center justify-between q-mb-sm">
-                <div class="text-overline text-amber-9" style="line-height:1">Destination</div>
-                <q-btn flat dense color="grey-6" icon="settings" size="xs"
-                  @click="showAdvancedDisk = !showAdvancedDisk">
-                  <q-tooltip>Advanced Options</q-tooltip>
+              <!-- 2. Burn Button -->
+              <div class="row q-gutter-x-sm q-gutter-y-sm">
+                <q-btn color="red-10" :label="organStore.isOutputRemovable ? 'Burn to Card' : 'Copy to Folder'"
+                  class="col font-cinzel q-py-sm shadow-10" :loading="organStore.isRendering"
+                  :disable="organStore.banks.length === 0" @click="handleRenderClick"
+                  :icon-right="organStore.isOutputRemovable ? 'sd_card' : 'folder'">
                 </q-btn>
               </div>
 
-              <!-- Drive Picker -->
-              <div v-if="!showAdvancedDisk" class="drive-picker q-gutter-y-xs">
-                <div v-for="drive in organStore.availableDrives" :key="drive.mountPoint"
-                  class="drive-item q-pa-sm rounded-borders cursor-pointer row items-center no-wrap"
-                  :class="{ 'drive-selected': organStore.outputDir === drive.mountPoint }" @click="selectDrive(drive)">
-                  <q-icon
-                    :name="(drive.volumeName === 'TCO' || drive.volumeName === organStore.targetVolumeLabel) ? 'sd_card' : 'usb'"
-                    :color="(drive.volumeName === 'TCO' || drive.volumeName === organStore.targetVolumeLabel) ? 'amber' : 'grey-5'"
-                    size="sm" class="q-mr-sm" />
-                  <div class="col overflow-hidden">
-                    <div class="text-caption text-weight-bold ellipsis">{{ drive.volumeName || 'Untitled' }}</div>
-                    <div class="text-xs text-grey-6 ellipsis">{{ drive.mountPoint }}</div>
-                  </div>
-                  <q-icon v-if="organStore.outputDir === drive.mountPoint" name="check_circle" color="amber"
-                    size="xs" />
+              <!-- 3. Progress / Preview Area -->
+              <div v-if="organStore.isRendering">
+                <div class="text-caption text-amber text-center q-mb-xs">
+                  {{ organStore.renderStatus || 'Rendering...' }}
                 </div>
-
-                <div v-if="organStore.availableDrives.length === 0"
-                  class="text-center q-pa-md border-dashed rounded-borders text-grey-7 italic text-xs">
-                  No removable drives detected
-                </div>
-
-                <q-btn v-if="organStore.availableDrives.length === 0 || showAdvancedDisk" outline color="amber-7"
-                  icon="folder_open" label="Select Target Folder" class="full-width q-mt-sm font-cinzel text-xs"
-                  @click="organStore.setOutputDir" />
-              </div>
-
-              <!-- Advanced Folder View -->
-              <div v-if="showAdvancedDisk"
-                class="advanced-folder q-pa-sm rounded-borders bg-black-50 border-amber-muted">
-                <div class="row items-center justify-between q-mb-xs">
-                  <div class="text-caption text-amber-8">Selected Path</div>
-                  <q-btn flat dense color="amber-7" icon="folder_open" size="xs" @click="organStore.setOutputDir" />
-                </div>
-                <div class="text-xs text-grey-5 ellipsis dir-path">
-                  {{ organStore.outputDir || 'Not selected' }}
+                <q-linear-progress :value="organStore.renderProgress" color="amber" size="8px" rounded
+                  class="q-linear-progress--animate" />
+                <div class="row items-center justify-between">
+                  <div class="text-xs text-grey-6">{{ Math.round(organStore.renderProgress * 100) }}%</div>
+                  <q-btn flat dense color="red-5" label="Cancel" size="sm" icon="close"
+                    @click="organStore.cancelRendering" />
                 </div>
               </div>
-            </div>
 
-            <div v-if="organStore.outputDir && !organStore.isRendering"
-              class="row items-center justify-between q-px-sm bg-green-10 rounded-borders animate-fade q-py-xs q-mt-sm">
-              <div class="text-caption text-white">{{ organStore.isOutputRemovable ? 'Drive Ready' : 'Folder Ready' }}
+              <div v-else-if="organStore.outputDir"
+                class="row items-center justify-between q-px-sm bg-green-10 rounded-borders animate-fade q-py-xs">
+                <div class="text-caption text-white semi-bold">{{ organStore.isOutputRemovable ? 'Drive Ready' :
+                  'Folder Ready' }}
+                </div>
+                <q-btn flat dense color="white" label="Preview" size="sm" class="text-weight-bold"
+                  @click="$router.push({ path: '/preview', query: { folder: organStore.outputDir } })" />
               </div>
-              <q-btn flat dense color="white" label="Preview" size="sm"
-                @click="$router.push({ path: '/preview', query: { folder: organStore.outputDir } })" />
             </div>
           </div>
         </div>
