@@ -13,6 +13,9 @@ contextBridge.exposeInMainWorld('myApi', {
     saveOrganState: (odfPath: string, state: any) => ipcRenderer.invoke('save-organ-state', { odfPath, state }),
     loadOrganState: (odfPath: string) => ipcRenderer.invoke('load-organ-state', odfPath),
     getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+    getDiskInfo: (path: string) => ipcRenderer.invoke('get-disk-info', path),
+    listRemovableDrives: () => ipcRenderer.invoke('list-removable-drives'),
+    formatVolume: (path: string, label: string) => ipcRenderer.invoke('format-volume', { path, label }),
 
     // Updates
     checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),

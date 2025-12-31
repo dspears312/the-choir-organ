@@ -17,6 +17,7 @@ export interface VirtualStop {
     harmonicMultiplier: number;
     noteOffset: number;
     volume?: number;
+    delay?: number; // in ms
 }
 
 export const useOrganStore = defineStore('organ', {
@@ -36,8 +37,24 @@ export const useOrganStore = defineStore('organ', {
         renderStatus: '',
         isRestoring: false,
         midiAccess: null as MIDIAccess | null,
-        virtualStops: [] as VirtualStop[]
+        virtualStops: [] as VirtualStop[],
+        suppressDiskWarning: false,
+        isOutputRemovable: false,
+        availableDrives: [] as any[],
+        drivePollInterval: null as any
     }),
+    getters: {
+        targetVolumeLabel: (state) => {
+            if (state.organData?.name) {
+                const label = state.organData.name
+                    .replace(/[^a-zA-Z0-9]/g, '')
+                    .substring(0, 11)
+                    .toUpperCase();
+                return label || 'TCO';
+            }
+            return 'TCO';
+        }
+    },
     actions: {
         async loadOrgan(path?: string) {
             this.isRestoring = true;
@@ -79,9 +96,17 @@ export const useOrganStore = defineStore('organ', {
                     if (savedState.useReleaseSamples !== undefined) {
                         this.setUseReleaseSamples(savedState.useReleaseSamples);
                     }
-                    if (savedState.outputDir) this.outputDir = savedState.outputDir;
+                    if (savedState.outputDir) {
+                        this.outputDir = savedState.outputDir;
+                        await this.updateDiskInfo();
+                    }
                     if (savedState.virtualStops) this.virtualStops = savedState.virtualStops;
                 }
+
+                // Start drive polling
+                this.fetchDrives();
+                if (this.drivePollInterval) clearInterval(this.drivePollInterval);
+                this.drivePollInterval = setInterval(() => this.fetchDrives(), 5000);
             } else if (data?.error) {
                 console.error(data.error);
             }
@@ -216,8 +241,9 @@ export const useOrganStore = defineStore('organ', {
             let harmonicMultiplier = 1;
             let noteOffset = 0;
 
+            let vs: VirtualStop | undefined;
             if (stopId.startsWith('VIRT_')) {
-                const vs = this.virtualStops.find(v => v.id === stopId);
+                vs = this.virtualStops.find(v => v.id === stopId);
                 if (!vs) return;
                 actualStopId = vs.originalStopId;
                 pitchShift = vs.pitchShift || 0;
@@ -262,7 +288,8 @@ export const useOrganStore = defineStore('organ', {
                             manual?.id,
                             activeTremulants,
                             pitchShift,
-                            adjustedNote
+                            adjustedNote,
+                            vs?.delay || 0
                         );
                     }
                 }
@@ -277,6 +304,67 @@ export const useOrganStore = defineStore('organ', {
             const dir = await (window as any).myApi.selectFolder();
             if (dir) {
                 this.outputDir = dir;
+                await this.updateDiskInfo();
+            }
+        },
+
+        async updateDiskInfo() {
+            if (!this.outputDir) {
+                this.isOutputRemovable = false;
+                return;
+            }
+            const info = await (window as any).myApi.getDiskInfo(this.outputDir);
+            this.isOutputRemovable = !!(info && info.isRemovable);
+        },
+
+        async fetchDrives() {
+            const drives = await (window as any).myApi.listRemovableDrives();
+            this.availableDrives = drives;
+
+            // Auto-select TCO drive if nothing selected
+            if (!this.outputDir && drives.length > 0) {
+                const target = drives.find((d: any) => d.volumeName === this.targetVolumeLabel) ||
+                    drives.find((d: any) => d.volumeName === 'TCO');
+                if (target) {
+                    this.outputDir = target.mountPoint;
+                    this.isOutputRemovable = true;
+                }
+            }
+        },
+
+        async checkOutputPath() {
+            if (!this.outputDir) return { type: 'none' };
+            const info = await (window as any).myApi.getDiskInfo(this.outputDir);
+            if (info && info.isRemovable && info.isRoot) {
+                return { type: 'removable_root', info };
+            }
+            if (!this.suppressDiskWarning) {
+                return { type: 'local_folder' };
+            }
+            return { type: 'proceed' };
+        },
+
+        async formatOutputVolume() {
+            if (!this.outputDir) return;
+            this.isRendering = true;
+            this.renderStatus = 'Formatting volume...';
+
+            const label = this.targetVolumeLabel;
+
+            try {
+                const result = await (window as any).myApi.formatVolume(this.outputDir, label);
+                if (result.success && result.newPath) {
+                    this.outputDir = result.newPath;
+                    this.renderStatus = 'Format successful.';
+                    await this.updateDiskInfo();
+                } else if (result.success) {
+                    this.renderStatus = `Format successful as ${label}. Remounting...`;
+                }
+            } catch (e: any) {
+                this.renderStatus = `Format failed: ${e.message}`;
+                throw e;
+            } finally {
+                this.isRendering = false;
             }
         },
 
@@ -344,7 +432,7 @@ export const useOrganStore = defineStore('organ', {
         updateVirtualStop(updatedStop: VirtualStop) {
             const index = this.virtualStops.findIndex(v => v.id === updatedStop.id);
             if (index > -1) {
-                this.virtualStops[index] = { ...updatedStop };
+                this.virtualStops.splice(index, 1, { ...updatedStop });
             }
         },
 
@@ -423,7 +511,8 @@ export const useOrganStore = defineStore('organ', {
                             gain: originalStop.gain || 0,
                             pitchShift: vs.pitchShift || 0,
                             harmonicMultiplier: vs.harmonicMultiplier || 1,
-                            noteOffset: vs.noteOffset || 0
+                            noteOffset: vs.noteOffset || 0,
+                            delay: vs.delay || 0
                         };
                     }
                 });

@@ -4,6 +4,7 @@ import path from 'path';
 import os from 'os';
 import { fileURLToPath } from 'url'
 import { setImmediate } from 'timers';
+import { exec } from 'child_process';
 import { parseODF } from './utils/odf-parser';
 import { renderNote } from './utils/renderer';
 import { readWav } from './utils/wav-reader';
@@ -19,6 +20,144 @@ const currentDir = fileURLToPath(new URL('.', import.meta.url));
 
 let mainWindow: BrowserWindow | undefined;
 let isCancellationRequested = false;
+
+async function listDrives(): Promise<any[]> {
+  if (process.platform === 'darwin') {
+    return new Promise((resolve) => {
+      exec('diskutil list -plist external', async (error, stdout) => {
+        if (error) return resolve([]);
+        // Parse the plist for all mount points
+        const mountPoints = stdout.match(/<key>MountPoint<\/key>\s*<string>(.*?)<\/string>/g) || [];
+        const drives = await Promise.all(mountPoints.map(async (m) => {
+          const pathStr = m.match(/<string>(.*?)<\/string>/)?.[1];
+          if (!pathStr) return null;
+          return await getDiskInfo(pathStr);
+        }));
+        resolve(drives.filter((d: any) => d && d.isRemovable));
+      });
+    });
+  } else if (process.platform === 'win32') {
+    return new Promise((resolve) => {
+      exec('powershell "Get-Volume | Where-Object {$_.DriveType -eq \'Removable\'} | Select-Object -Property DriveLetter,DriveType,FileSystemLabel,FileSystem | ConvertTo-Json"', (error, stdout) => {
+        if (error || !stdout) return resolve([]);
+        try {
+          const data = JSON.parse(stdout);
+          const volumes = Array.isArray(data) ? data : [data];
+          resolve(volumes.map(v => ({
+            isRemovable: true,
+            deviceIdentifier: v.DriveLetter,
+            volumeName: v.FileSystemLabel,
+            mountPoint: v.DriveLetter + ':\\',
+            isRoot: true,
+            platform: 'win32'
+          })));
+        } catch (e) { resolve([]); }
+      });
+    });
+  } else {
+    // Linux
+    return new Promise((resolve) => {
+      exec('lsblk -J -o NAME,MOUNTPOINT,RM,LABEL', (error, stdout) => {
+        if (error) return resolve([]);
+        try {
+          const data = JSON.parse(stdout);
+          const drives: any[] = [];
+          const traverse = (devices: any[]) => {
+            for (const d of devices) {
+              if (d.mountpoint && (d.rm === true || d.rm === "1" || d.rm === 1)) {
+                drives.push({
+                  isRemovable: true,
+                  deviceIdentifier: d.name.startsWith('/') ? d.name : `/dev/${d.name}`,
+                  volumeName: d.label,
+                  mountPoint: d.mountpoint,
+                  isRoot: true,
+                  platform: 'linux'
+                });
+              }
+              if (d.children) traverse(d.children);
+            }
+          };
+          traverse(data.blockdevices || []);
+          resolve(drives);
+        } catch (e) { resolve([]); }
+      });
+    });
+  }
+}
+
+async function getDiskInfo(folderPath: string) {
+  if (process.platform === 'darwin') {
+    return new Promise((resolve) => {
+      exec(`diskutil info -plist "${folderPath}"`, (error, stdout) => {
+        if (error) return resolve(null);
+        const isRemovable = /<key>RemovableMedia<\/key>\s*<true\/>/.test(stdout) || /<key>BusProtocol<\/key>\s*<string>USB<\/string>/.test(stdout);
+        const deviceIdentifier = stdout.match(/<key>DeviceIdentifier<\/key>\s*<string>(.*?)<\/string>/)?.[1];
+        const volumeName = stdout.match(/<key>VolumeName<\/key>\s*<string>(.*?)<\/string>/)?.[1];
+        const mountPoint = stdout.match(/<key>MountPoint<\/key>\s*<string>(.*?)<\/string>/)?.[1];
+        const isRoot = mountPoint && (path.resolve(folderPath) === path.resolve(mountPoint));
+
+        resolve({
+          isRemovable,
+          deviceIdentifier,
+          volumeName,
+          isRoot,
+          mountPoint,
+          platform: 'darwin'
+        });
+      });
+    });
+  } else if (process.platform === 'win32') {
+    const driveLetter = folderPath.match(/^([a-zA-Z]):/)?.[1];
+    if (!driveLetter) return null;
+    return new Promise((resolve) => {
+      exec(`powershell "Get-Volume -DriveLetter ${driveLetter} | Select-Object -Property DriveLetter,DriveType,FileSystemLabel,FileSystem | ConvertTo-Json"`, (error, stdout) => {
+        if (error) return resolve(null);
+        try {
+          const info = JSON.parse(stdout);
+          resolve({
+            isRemovable: info.DriveType === 2 || info.DriveType === 'Removable',
+            deviceIdentifier: driveLetter,
+            volumeName: info.FileSystemLabel,
+            mountPoint: driveLetter + ':\\',
+            isRoot: folderPath.length <= 3,
+            platform: 'win32'
+          });
+        } catch (e) { resolve(null); }
+      });
+    });
+  } else {
+    // Linux
+    return new Promise((resolve) => {
+      exec(`lsblk -J -o NAME,MOUNTPOINT,RM,LABEL`, (error, stdout) => {
+        if (error) return resolve(null);
+        try {
+          const data = JSON.parse(stdout);
+          const findMount = (devices: any[]): any => {
+            for (const d of devices) {
+              if (d.mountpoint && path.resolve(d.mountpoint) === path.resolve(folderPath)) return { device: d, target: d };
+              if (d.children) {
+                const found = findMount(d.children);
+                if (found) return { device: d, target: found.target };
+              }
+            }
+            return null;
+          };
+          const found = findMount(data.blockdevices || []);
+          if (found) {
+            resolve({
+              isRemovable: found.device.rm === true || found.device.rm === "1" || found.device.rm === 1,
+              deviceIdentifier: found.target.name.startsWith('/') ? found.target.name : `/dev/${found.target.name}`,
+              volumeName: found.target.label,
+              mountPoint: found.target.mountpoint,
+              isRoot: true,
+              platform: 'linux'
+            });
+          } else resolve(null);
+        } catch (e) { resolve(null); }
+      });
+    });
+  }
+}
 
 // Configure autoUpdater
 autoUpdater.autoDownload = false; // We will let the user decide
@@ -142,7 +281,8 @@ ipcMain.handle('render-bank', async (event, { bankNumber, combination, organData
                 pitchOffsetCents: stop.pitchShift || 0,
                 harmonicNumber: (pipe.harmonicNumber || 1) * (stop.harmonicMultiplier || 1),
                 manualId: stop.manualId,
-                renderingNote: adjustedNote
+                renderingNote: adjustedNote,
+                delay: stop.delay || 0
               });
             }
           }
@@ -230,6 +370,68 @@ ipcMain.handle('load-organ-state', async (event, odfPath) => {
 
 ipcMain.handle('get-app-version', () => {
   return process.env.APP_VERSION || app.getVersion();
+});
+
+ipcMain.handle('get-disk-info', async (event, folderPath: string) => {
+  try {
+    return await getDiskInfo(folderPath);
+  } catch (e) {
+    console.error('get-disk-info error:', e);
+    return null;
+  }
+});
+
+ipcMain.handle('list-removable-drives', async () => {
+  try {
+    return await listDrives();
+  } catch (e) {
+    console.error('list-removable-drives error:', e);
+    return [];
+  }
+});
+
+ipcMain.handle('format-volume', async (event, { path: folderPath, label }) => {
+  const info: any = await getDiskInfo(folderPath);
+  if (!info || !info.deviceIdentifier) throw new Error('Could not identify device for formatting');
+  if (!info.isRemovable) throw new Error('Safety check failed: Target is not a removable volume.');
+
+  return new Promise((resolve, reject) => {
+    let command = '';
+    if (process.platform === 'darwin') {
+      command = `diskutil eraseVolume FAT32 "${label}" ${info.deviceIdentifier}`;
+    } else if (process.platform === 'win32') {
+      command = `powershell "Format-Volume -DriveLetter ${info.deviceIdentifier} -FileSystem FAT32 -NewFileSystemLabel '${label}' -Confirm:$false"`;
+    } else {
+      command = `mkfs.fat -F 32 -n "${label}" ${info.deviceIdentifier}`;
+    }
+
+    exec(command, async (error, stdout, stderr) => {
+      if (error) {
+        console.error('Format error:', stderr);
+        return reject(new Error(stderr || 'Format failed. You may need administrative privileges.'));
+      }
+
+      // Robust TCO Discovery after formatting
+      // We poll for up to 15 seconds for a drive with the new label
+      let attempts = 0;
+      const poll = async () => {
+        const drives = await listDrives();
+        const tco = drives.find(d => d.volumeName === label || (process.platform === 'darwin' && d.mountPoint?.endsWith('/' + label)));
+
+        if (tco && tco.mountPoint) {
+          resolve({ success: true, newPath: tco.mountPoint });
+        } else if (attempts < 30) {
+          attempts++;
+          setTimeout(poll, 500);
+        } else {
+          // Fallback if we can't find it definitively, but it was successful
+          resolve({ success: true, newPath: null });
+        }
+      };
+
+      setTimeout(poll, 1500); // Initial wait for OS to unmount/format
+    });
+  });
 });
 
 // Update Handlers

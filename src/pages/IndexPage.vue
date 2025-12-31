@@ -50,17 +50,17 @@
 
           <q-separator vertical color="grey-9" />
 
-          <q-toggle v-model="organStore.isTsunamiMode" @update:model-value="organStore.setTsunamiMode" color="amber"
-            label="Simulate Tsunami" dense left-label class="text-caption font-cinzel q-mr-md" />
+          <!-- <q-toggle v-model="organStore.isTsunamiMode" @update:model-value="organStore.setTsunamiMode" color="amber"
+            label="Simulate Tsunami" dense left-label class="text-caption font-cinzel q-mr-md" /> -->
 
           <q-toggle v-model="organStore.useReleaseSamples" @update:model-value="organStore.setUseReleaseSamples"
             color="blue-4" label="Release Samples" dense left-label class="text-caption font-cinzel" />
 
-          <div class="row q-gutter-sm">
-            <q-btn flat icon="file_open" @click="organStore.importFromJSON"><q-tooltip>Open Combination
-                File</q-tooltip></q-btn>
-            <q-btn rounded label="Save" color="green-4" icon="save" @click="organStore.exportToJSON" />
-          </div>
+          <q-separator vertical color="grey-9" />
+
+          <q-btn flat icon="file_open" round @click="organStore.importFromJSON"><q-tooltip>Open Combination
+              File</q-tooltip></q-btn>
+          <q-btn rounded label="Save" color="green" icon="save" @click="organStore.exportToJSON" />
         </div>
       </div>
 
@@ -192,9 +192,10 @@
             <q-separator color="grey-9" class="q-my-sm" />
 
             <div class="row q-gutter-x-sm">
-              <q-btn color="red-10" label="Burn to Card" class="col font-cinzel q-py-sm shadow-10"
-                :loading="organStore.isRendering" :disable="organStore.banks.length === 0"
-                @click="organStore.renderAll()" icon-right="sd_card">
+              <q-btn color="red-10" :label="organStore.isOutputRemovable ? 'Burn to Card' : 'Copy to Folder'"
+                class="col font-cinzel q-py-sm shadow-10" :loading="organStore.isRendering"
+                :disable="organStore.banks.length === 0" @click="handleRenderClick"
+                :icon-right="organStore.isOutputRemovable ? 'sd_card' : 'folder'">
               </q-btn>
             </div>
 
@@ -211,24 +212,60 @@
               </div>
             </div>
 
-            <div v-if="!organStore.isRendering"
-              class="output-dir-area q-mt-sm q-pa-sm rounded-borders bg-black-50 border-amber-muted">
-              <div class="row items-center justify-between q-mb-xs">
-                <div class="text-overline text-amber-9" style="line-height:1">SD Card Location</div>
-                <q-btn flat dense color="amber-7" icon="folder_open" size="xs" @click="organStore.setOutputDir">
-                  <q-tooltip>Change Directory</q-tooltip>
+            <div v-if="!organStore.isRendering" class="output-destination-area q-mt-sm">
+              <div class="row items-center justify-between q-mb-sm">
+                <div class="text-overline text-amber-9" style="line-height:1">Destination</div>
+                <q-btn flat dense color="grey-6" icon="settings" size="xs"
+                  @click="showAdvancedDisk = !showAdvancedDisk">
+                  <q-tooltip>Advanced Options</q-tooltip>
                 </q-btn>
               </div>
-              <div class="text-caption text-grey-5 ellipsis dir-path">
-                {{ organStore.outputDir || 'Not selected' }}
-                <q-tooltip>{{ organStore.outputDir || 'Click icon to select folder' }}</q-tooltip>
+
+              <!-- Drive Picker -->
+              <div v-if="!showAdvancedDisk" class="drive-picker q-gutter-y-xs">
+                <div v-for="drive in organStore.availableDrives" :key="drive.mountPoint"
+                  class="drive-item q-pa-sm rounded-borders cursor-pointer row items-center no-wrap"
+                  :class="{ 'drive-selected': organStore.outputDir === drive.mountPoint }" @click="selectDrive(drive)">
+                  <q-icon
+                    :name="(drive.volumeName === 'TCO' || drive.volumeName === organStore.targetVolumeLabel) ? 'sd_card' : 'usb'"
+                    :color="(drive.volumeName === 'TCO' || drive.volumeName === organStore.targetVolumeLabel) ? 'amber' : 'grey-5'"
+                    size="sm" class="q-mr-sm" />
+                  <div class="col overflow-hidden">
+                    <div class="text-caption text-weight-bold ellipsis">{{ drive.volumeName || 'Untitled' }}</div>
+                    <div class="text-xs text-grey-6 ellipsis">{{ drive.mountPoint }}</div>
+                  </div>
+                  <q-icon v-if="organStore.outputDir === drive.mountPoint" name="check_circle" color="amber"
+                    size="xs" />
+                </div>
+
+                <div v-if="organStore.availableDrives.length === 0"
+                  class="text-center q-pa-md border-dashed rounded-borders text-grey-7 italic text-xs">
+                  No removable drives detected
+                </div>
+
+                <q-btn v-if="organStore.availableDrives.length === 0 || showAdvancedDisk" outline color="amber-7"
+                  icon="folder_open" label="Select Target Folder" class="full-width q-mt-sm font-cinzel text-xs"
+                  @click="organStore.setOutputDir" />
+              </div>
+
+              <!-- Advanced Folder View -->
+              <div v-if="showAdvancedDisk"
+                class="advanced-folder q-pa-sm rounded-borders bg-black-50 border-amber-muted">
+                <div class="row items-center justify-between q-mb-xs">
+                  <div class="text-caption text-amber-8">Selected Path</div>
+                  <q-btn flat dense color="amber-7" icon="folder_open" size="xs" @click="organStore.setOutputDir" />
+                </div>
+                <div class="text-xs text-grey-5 ellipsis dir-path">
+                  {{ organStore.outputDir || 'Not selected' }}
+                </div>
               </div>
             </div>
 
             <div v-if="organStore.outputDir && !organStore.isRendering"
               class="row items-center justify-between q-px-sm bg-green-10 rounded-borders animate-fade q-py-xs q-mt-sm">
-              <div class="text-caption text-white">Ready</div>
-              <q-btn flat dense color="white" label="Preview Folder" size="sm"
+              <div class="text-caption text-white">{{ organStore.isOutputRemovable ? 'Drive Ready' : 'Folder Ready' }}
+              </div>
+              <q-btn flat dense color="white" label="Preview" size="sm"
                 @click="$router.push({ path: '/preview', query: { folder: organStore.outputDir } })" />
             </div>
           </div>
@@ -266,12 +303,81 @@
             <div class="col-12">
               <q-input v-model.number="vsForm.noteOffset" type="number" dark filled color="green" dense />
             </div>
+
+            <div class="col-12 text-caption text-grey-5">Delay (ms)</div>
+            <div class="col-12">
+              <q-input v-model.number="vsForm.delay" type="number" dark filled color="green" dense />
+            </div>
           </div>
         </q-card-section>
 
         <q-card-actions align="right" class="q-pa-md">
           <q-btn flat label="Cancel" v-close-popup />
           <q-btn :label="vsForm.id ? 'Save' : 'Create'" color="green" @click="saveVirtualStop" v-close-popup />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+
+    <!-- Disk Compatibility Warning Dialog -->
+    <q-dialog v-model="showDiskWarning" persistent>
+      <q-card dark style="min-width: 450px; background: #1a1a1a; border: 1px solid #444;" class="q-pa-md">
+        <q-card-section class="row items-center q-pb-none">
+          <div class="text-h6 font-cinzel text-amber">
+            <q-icon name="warning" color="amber" size="32px" class="q-mr-md" />
+            Compatibility Warning
+          </div>
+        </q-card-section>
+
+        <q-card-section class="q-pt-md">
+          <p class="text-body1">The selected output directory is a folder on your computer.</p>
+          <p class="text-grey-5">Tsunami SD cards are very sensitive to file system alignment. Files copied manually to
+            an
+            existing folder may not always play correctly or could cause stuttering.</p>
+
+          <q-checkbox v-model="organStore.suppressDiskWarning" label="Don't warn me again" dark color="amber"
+            class="q-mt-md" />
+        </q-card-section>
+
+        <q-card-actions align="right" class="q-gutter-sm">
+          <q-btn flat label="Cancel" color="grey-6" v-close-popup />
+          <q-btn label="Proceed Anyways" color="amber-9" text-color="black" @click="startRendering" v-close-popup />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+
+    <!-- Removable Disk Format Dialog -->
+    <q-dialog v-model="showFormatDialog" persistent>
+      <q-card dark style="min-width: 500px; background: #1a1a1a; border: 2px solid #d32f2f;" class="q-pa-md shadow-24">
+        <q-card-section class="row items-center q-pb-none">
+          <div class="text-h5 font-cinzel text-red-5">
+            <q-icon name="sd_card_alert" color="red-5" size="40px" class="q-mr-md" />
+            Format SD Card?
+          </div>
+        </q-card-section>
+
+        <q-card-section class="q-pt-md">
+          <div class="bg-red-10 q-pa-md rounded-borders q-mb-md border-red">
+            <div class="text-subtitle1 text-weight-bold text-white">ALL DATA ON THIS VOLUME WILL BE ERASED</div>
+            <div class="text-caption text-red-2">This is the recommended way to ensure maximum compatibility with
+              Tsunami
+              hardware.</div>
+          </div>
+
+          <p class="text-body2">The volume will be formatted as <span class="text-amber text-weight-bold">FAT32</span>
+            and
+            named <span class="text-amber text-weight-bold">"{{ organStore.targetVolumeLabel }}"</span>.</p>
+        </q-card-section>
+
+        <q-card-actions vertical align="center" class="q-gutter-y-sm">
+          <q-btn label="ERASE AND FORMAT (Recommended)" color="red-7" class="full-width q-py-md text-weight-bold"
+            @click="handleFormatAndRender" v-close-popup />
+
+          <div class="row full-width q-gutter-x-sm">
+            <q-btn flat label="Just copy files" color="grey-6" class="col" @click="startRendering" v-close-popup>
+              <q-tooltip>May cause compatibility issues with Tsunami</q-tooltip>
+            </q-btn>
+            <q-btn flat label="Cancel" color="white" class="col" v-close-popup />
+          </div>
         </q-card-actions>
       </q-card>
     </q-dialog>
@@ -288,6 +394,10 @@ import { parseStopLabel } from 'src/utils/label-parser';
 const organStore = useOrganStore();
 const selectedBank = ref(-1);
 
+const showDiskWarning = ref(false);
+const showFormatDialog = ref(false);
+const showAdvancedDisk = ref(false);
+
 // Virtual Stop logic
 const showVsDialog = ref(false);
 const vsForm = ref({
@@ -297,7 +407,8 @@ const vsForm = ref({
   pitch: '',
   pitchShift: 0,
   harmonicMultiplier: 1.0,
-  noteOffset: 0
+  noteOffset: 0,
+  delay: 0
 });
 
 function openCreateVirtualStop(stopId: string) {
@@ -312,7 +423,8 @@ function openCreateVirtualStop(stopId: string) {
     pitch: pitch,
     pitchShift: 0,
     harmonicMultiplier: 1.0,
-    noteOffset: 0
+    noteOffset: 0,
+    delay: 0
   };
   showVsDialog.value = true;
 }
@@ -325,7 +437,8 @@ function openEditVirtualStop(vs: any) {
     pitch: vs.pitch,
     pitchShift: vs.pitchShift,
     harmonicMultiplier: vs.harmonicMultiplier,
-    noteOffset: vs.noteOffset
+    noteOffset: vs.noteOffset,
+    delay: vs.delay || 0
   };
   showVsDialog.value = true;
 }
@@ -338,7 +451,8 @@ function saveVirtualStop() {
     pitch: vsForm.value.pitch,
     pitchShift: vsForm.value.pitchShift,
     harmonicMultiplier: vsForm.value.harmonicMultiplier,
-    noteOffset: vsForm.value.noteOffset
+    noteOffset: vsForm.value.noteOffset,
+    delay: vsForm.value.delay || 0
   };
 
   if (vsForm.value.id) {
@@ -361,6 +475,40 @@ function addNewBank() {
   if (organStore.addBank()) {
     selectedBank.value = organStore.banks.length - 1;
   }
+}
+
+async function handleRenderClick() {
+  if (!organStore.outputDir) {
+    await organStore.setOutputDir();
+    if (!organStore.outputDir) return;
+  }
+
+  const check = await organStore.checkOutputPath();
+  if (check.type === 'removable_root') {
+    showFormatDialog.value = true;
+  } else if (check.type === 'local_folder') {
+    showDiskWarning.value = true;
+  } else {
+    startRendering();
+  }
+}
+
+async function handleFormatAndRender() {
+  try {
+    await organStore.formatOutputVolume();
+    startRendering();
+  } catch (e: any) {
+    // Error is handled in store status
+  }
+}
+
+function startRendering() {
+  organStore.renderAll();
+}
+
+function selectDrive(drive: any) {
+  organStore.outputDir = drive.mountPoint;
+  organStore.isOutputRemovable = true;
 }
 
 const midiColor = computed(() => {
@@ -387,6 +535,10 @@ onMounted(() => {
 
 onUnmounted(() => {
   organStore.stopMIDI();
+  if (organStore.drivePollInterval) {
+    clearInterval(organStore.drivePollInterval);
+    organStore.drivePollInterval = null;
+  }
 });
 
 watch(
@@ -504,12 +656,27 @@ watch(
   opacity: 0.7;
 }
 
-.output-dir-area {
-  transition: all 0.3s ease;
+.drive-item {
+  background: rgba(40, 40, 40, 0.4);
+  border: 1px solid transparent;
+  transition: all 0.2s ease;
 
   &:hover {
-    border-color: rgba(212, 175, 55, 0.5);
-    background: rgba(0, 0, 0, 0.7);
+    background: rgba(60, 60, 60, 0.6);
+    border-color: #444;
   }
+
+  &.drive-selected {
+    background: rgba(212, 175, 55, 0.15);
+    border-color: rgba(212, 175, 55, 0.5);
+  }
+}
+
+.border-dashed {
+  border: 1px dashed #444;
+}
+
+.output-destination-area {
+  transition: all 0.3s ease;
 }
 </style>

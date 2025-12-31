@@ -17,6 +17,7 @@ export interface RenderPipe {
     harmonicNumber: number;
     manualId?: string;
     renderingNote?: number; // For virtual stop transposition
+    delay?: number; // in ms
 }
 
 export async function renderNote(
@@ -78,7 +79,7 @@ export async function renderNote(
 
             const tremulantsForPipe = activeTremulants.filter(t => !t.manualId || String(t.manualId) === String(pipe.manualId));
 
-            layerSample(outputBuffer, wavInfo, finalScale, playbackRate, tremulantsForPipe);
+            layerSample(outputBuffer, wavInfo, finalScale, playbackRate, tremulantsForPipe, pipe.delay || 0);
             activePipeCount++;
         } catch (e) {
             console.error(`Failed to layer pipe ${pipe.path}:`, e);
@@ -125,10 +126,11 @@ function layerSample(
     source: any,
     scale: number,
     playbackRate: number,
-    tremulants: any[] = []
+    tremulants: any[] = [],
+    delayMs: number = 0
 ) {
-    const channel0 = target[0];
-    const channel1 = target[1];
+    const channel0 = target[0]!;
+    const channel1 = target[1]!;
     if (!channel0 || !channel1) return;
 
     const srcData = source.data;
@@ -141,7 +143,9 @@ function layerSample(
     let srcIdx = 0;
     const sampleRate = 44100;
 
-    for (let i = 0; i < channel0.length; i++) {
+    const startOffsetSamples = Math.floor((delayMs / 1000) * sampleRate);
+
+    for (let i = startOffsetSamples; i < channel0.length; i++) {
         let currentScale = scale;
         let currentPlaybackRate = playbackRate;
 

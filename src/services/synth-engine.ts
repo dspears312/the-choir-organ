@@ -101,7 +101,8 @@ export class SynthEngine {
         manualId?: string,
         activeTremulants: any[] = [],
         pitchOffsetCents: number = 0,
-        renderingNote?: number
+        renderingNote?: number,
+        delay: number = 0
     ) {
         if (this.context.state === 'suspended') {
             await this.context.resume();
@@ -174,7 +175,7 @@ export class SynthEngine {
         source.connect(gainNode);
         gainNode.connect(this.masterGain);
 
-        source.start();
+        source.start(this.context.currentTime + (delay / 1000));
 
         const voice: Voice = {
             note,
