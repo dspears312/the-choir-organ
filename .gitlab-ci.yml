@@ -20,7 +20,7 @@ before_script:
 build_linux:
   stage: build
   script:
-    - npm run build -- -P linux
+    - npm run build -- -m electron -T linux -P onTagOrDraft
   artifacts:
     paths:
       - dist/electron/Packaged/*linux*.AppImage
@@ -36,7 +36,7 @@ build_windows:
   stage: build
   image: electronuserland/builder:wine
   script:
-    - npm run build -- -P win
+    - npm run build -- -m electron -T win -P onTagOrDraft
   artifacts:
     paths:
       - dist/electron/Packaged/*win*.exe
@@ -52,7 +52,7 @@ build_macos:
   tags:
     - macos
   script:
-    - npm run build -- -P mac
+    - npm run build -- -m electron -T mac -P onTagOrDraft
   artifacts:
     paths:
       - dist/electron/Packaged/*mac*.dmg
