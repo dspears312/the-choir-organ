@@ -195,8 +195,7 @@ export default defineConfig((/* ctx */) => {
 
         appId: 'quasar-project',
         publish: {
-          provider: 'generic',
-          url: 'https://gitlab.com/dspears312/the-choir-organ/-/releases'
+          provider: 'github'
         },
         linux: {
           target: [
