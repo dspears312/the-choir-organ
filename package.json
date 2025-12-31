@@ -1,13 +1,12 @@
 {
-  "name": "quasar-project",
-  "version": "0.0.1",
+  "name": "the-choir-organ",
+  "version": "0.0.5",
   "description": "Tsunami Utilities by Sacred Music Library",
   "productName": "The Choir Organ",
-  "author": "Daniel Spears <dspears312@gmail.com>",
+  "author": "Daniel Spears <dspears@tecumtech.com>",
   "type": "module",
   "private": true,
   "scripts": {
-    "test": "echo \"No test specified\" && exit 0",
     "dev": "quasar dev -m electron",
     "build": "quasar build -m electron",
     "postinstall": "quasar prepare"

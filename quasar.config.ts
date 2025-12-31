@@ -2,6 +2,9 @@
 // https://v2.quasar.dev/quasar-cli-vite/quasar-config-file
 
 import { defineConfig } from '#q-app/wrappers';
+import fs from 'fs';
+
+const pkg = JSON.parse(fs.readFileSync('./package.json', 'utf-8'));
 
 export default defineConfig((/* ctx */) => {
   return {
@@ -56,7 +59,10 @@ export default defineConfig((/* ctx */) => {
 
       // publicPath: '/',
       // analyze: true,
-      // env: {},
+      // analyze: true,
+      env: {
+        APP_VERSION: pkg.version
+      },
       // rawDefine: {}
       // ignorePublicFolder: true,
       // minify: false,

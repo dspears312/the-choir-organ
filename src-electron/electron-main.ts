@@ -8,7 +8,9 @@ import { parseODF } from './utils/odf-parser';
 import { renderNote } from './utils/renderer';
 import { readWav } from './utils/wav-reader';
 import { addToRecent, getRecents, saveOrganState, loadOrganState } from './utils/persistence';
-import { autoUpdater } from 'electron-updater';
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const { autoUpdater } = require('electron-updater');
 
 // needed in case process is undefined under Linux
 const platform = process.platform || os.platform();
@@ -226,6 +228,10 @@ ipcMain.handle('load-organ-state', async (event, odfPath) => {
   return loadOrganState(odfPath);
 });
 
+ipcMain.handle('get-app-version', () => {
+  return process.env.APP_VERSION || app.getVersion();
+});
+
 // Update Handlers
 ipcMain.handle('check-for-updates', async () => {
   try {
@@ -252,23 +258,23 @@ ipcMain.handle('quit-and-install', () => {
 });
 
 // AutoUpdater Events
-autoUpdater.on('update-available', (info) => {
+autoUpdater.on('update-available', (info: any) => {
   mainWindow?.webContents.send('update-available', info);
 });
 
-autoUpdater.on('update-not-available', (info) => {
+autoUpdater.on('update-not-available', (info: any) => {
   mainWindow?.webContents.send('update-not-available', info);
 });
 
-autoUpdater.on('download-progress', (progressObj) => {
+autoUpdater.on('download-progress', (progressObj: any) => {
   mainWindow?.webContents.send('update-download-progress', progressObj);
 });
 
-autoUpdater.on('update-downloaded', (info) => {
+autoUpdater.on('update-downloaded', (info: any) => {
   mainWindow?.webContents.send('update-downloaded', info);
 });
 
-autoUpdater.on('error', (err) => {
+autoUpdater.on('error', (err: any) => {
   mainWindow?.webContents.send('update-error', err.message);
 });
 
@@ -276,7 +282,7 @@ void app.whenReady().then(() => {
   createWindow();
   // Check for updates after a short delay on startup
   setTimeout(() => {
-    autoUpdater.checkForUpdatesAndNotify().catch(err => {
+    autoUpdater.checkForUpdatesAndNotify().catch((err: any) => {
       console.error('Initial check for updates failed:', err);
     });
   }, 3000);

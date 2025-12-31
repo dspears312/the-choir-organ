@@ -136,7 +136,7 @@
 
           <!-- Scrollable Bank List -->
           <q-scroll-area class="col"
-            :thumb-style="{ width: '5px', borderRadius: '5px', background: '#d4af37', opacity: 0.5 }">
+            :thumb-style="{ width: '5px', borderRadius: '5px', background: '#d4af37', opacity: '0.5' }">
             <q-list dark separator class="bank-list">
               <q-item v-for="(bank, index) in organStore.banks" :key="bank.id" clickable v-ripple
                 :active="selectedBank === index" active-class="bank-active" class="bank-item q-py-sm"

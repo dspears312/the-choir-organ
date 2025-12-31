@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('myApi', {
     listDir: (path: string) => ipcRenderer.invoke('list-dir', path),
     saveOrganState: (odfPath: string, state: any) => ipcRenderer.invoke('save-organ-state', { odfPath, state }),
     loadOrganState: (odfPath: string) => ipcRenderer.invoke('load-organ-state', odfPath),
+    getAppVersion: () => ipcRenderer.invoke('get-app-version'),
 
     // Updates
     checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
