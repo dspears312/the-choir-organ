@@ -11,8 +11,15 @@
         <q-space />
 
         <div class="row q-gutter-sm">
+          <!-- Manual Update Path (Default) -->
+          <q-btn flat label="Download from GitHub" @click="downloadManual" />
+
+          <!-- Auto-Update Path (Disabled for now due to signing issues) -->
+          <!-- 
           <q-btn v-if="canInstall" flat label="Restart Now" @click="install" />
           <q-btn v-else-if="canDownload" flat label="Download" :loading="downloading" @click="download" />
+          -->
+
           <q-btn flat icon="close" v-close-popup v-if="!downloading" />
         </div>
       </q-card-section>
@@ -40,7 +47,7 @@ onMounted(() => {
 
   unsubs.push((window as any).myApi.onUpdateAvailable((info: any) => {
     title.value = 'Update Available';
-    message.value = `Version ${info.version} is available.`;
+    message.value = `Version ${info.version} is available. Download the new version from GitHub.`;
     canDownload.value = true;
     canInstall.value = false;
     show.value = true;
@@ -65,7 +72,7 @@ onMounted(() => {
     downloading.value = false;
     $q.notify({
       type: 'negative',
-      message: `Update Error: ${err}`
+      message: `Update Check Error: ${err}`
     });
   }));
 });
@@ -74,6 +81,12 @@ onUnmounted(() => {
   unsubs.forEach(unsub => unsub());
 });
 
+async function downloadManual() {
+  await (window as any).myApi.openExternalUrl('https://github.com/dspears312/the-choir-organ/releases');
+  show.value = false;
+}
+
+// Keep these for future use when code signing is implemented
 async function download() {
   await (window as any).myApi.downloadUpdate();
 }

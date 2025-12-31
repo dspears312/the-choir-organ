@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld('myApi', {
     getDiskInfo: (path: string) => ipcRenderer.invoke('get-disk-info', path),
     listRemovableDrives: () => ipcRenderer.invoke('list-removable-drives'),
     formatVolume: (path: string, label: string) => ipcRenderer.invoke('format-volume', { path, label }),
+    openExternalUrl: (url: string) => ipcRenderer.invoke('open-external-url', url),
 
     // Updates
     checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),

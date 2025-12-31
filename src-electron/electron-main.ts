@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, protocol, net } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, protocol, net, shell } from 'electron';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -503,6 +503,16 @@ ipcMain.handle('download-update', async () => {
     return { success: true };
   } catch (error: any) {
     console.error('Download update error:', error);
+    return { error: error.message };
+  }
+});
+
+ipcMain.handle('open-external-url', async (event, url) => {
+  try {
+    await shell.openExternal(url);
+    return { success: true };
+  } catch (error: any) {
+    console.error('Open external url error:', error);
     return { error: error.message };
   }
 });
