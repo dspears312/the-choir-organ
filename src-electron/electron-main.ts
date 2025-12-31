@@ -109,17 +109,20 @@ ipcMain.handle('render-bank', async (event, { bankNumber, combination, organData
     const trackNumber = note + (bankNumber * 128);
 
     // Find pipes for this note across active stops
-    const activePipes: any[] = []; // Using any to avoid complex type import for now, or use RenderPipe
+    const activePipes: any[] = [];
     combination.forEach((stopId: string) => {
       const stop = organData.stops[stopId];
       if (stop) {
         const manual = organData.manuals.find((m: any) => String(m.id) === String(stop.manualId));
         const isPedal = manual?.name.toLowerCase().includes('pedal') || false;
 
+        const noteOffset = stop.noteOffset || 0;
+        const adjustedNote = note + noteOffset;
+
         stop.rankIds.forEach((rankId: string) => {
           const rank = organData.ranks[rankId];
           if (rank) {
-            const pipe = rank.pipes.find((p: any) => p.midiNote === note) || rank.pipes[note - 36];
+            const pipe = rank.pipes.find((p: any) => p.midiNote === adjustedNote) || rank.pipes[adjustedNote - 36];
             if (pipe) {
               // Hierarchical Gain Summation (excluding Organ global gain, passed separately)
               const combinedGain = (manual?.gain || 0) + (stop.gain || 0) + (rank.gain || 0) + (pipe.gain || 0);
@@ -129,17 +132,16 @@ ipcMain.handle('render-bank', async (event, { bankNumber, combination, organData
                 volume: stop.volume ?? 100,
                 isPedal,
                 gain: combinedGain,
-                tuning: pipe.tuning ?? 0,
-                harmonicNumber: pipe.harmonicNumber || 1,
-                manualId: stop.manualId
+                pitchOffsetCents: stop.pitchShift || 0,
+                harmonicNumber: (pipe.harmonicNumber || 1) * (stop.harmonicMultiplier || 1),
+                manualId: stop.manualId,
+                renderingNote: adjustedNote
               });
             }
           }
         });
       }
     });
-
-
 
     // Find active tremulants for this note's manuals
     const activeTremulants: any[] = [];

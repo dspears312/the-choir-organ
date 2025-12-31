@@ -8,8 +8,16 @@ export interface Bank {
     stopVolumes: Record<string, number>;
 }
 
-// Add electron API type for listeners if needed, or cast window
-
+export interface VirtualStop {
+    id: string;
+    originalStopId: string;
+    name: string;
+    pitch: string;
+    pitchShift: number; // in cents
+    harmonicMultiplier: number;
+    noteOffset: number;
+    volume?: number;
+}
 
 export const useOrganStore = defineStore('organ', {
     state: () => ({
@@ -27,14 +35,14 @@ export const useOrganStore = defineStore('organ', {
         renderProgress: 0,
         renderStatus: '',
         isRestoring: false,
-        midiAccess: null as MIDIAccess | null
+        midiAccess: null as MIDIAccess | null,
+        virtualStops: [] as VirtualStop[]
     }),
     actions: {
         async loadOrgan(path?: string) {
             this.isRestoring = true;
             let data;
             if (path && typeof path === 'string') {
-                // path is strict string
                 data = await (window as any).myApi.selectOdfFile(path);
             } else {
                 data = await (window as any).myApi.selectOdfFile();
@@ -46,6 +54,7 @@ export const useOrganStore = defineStore('organ', {
                 this.banks = [];
                 this.currentCombination = [];
                 this.stopVolumes = {};
+                this.virtualStops = []; // Isolation Fix: clear virtual stops when loading new organ
 
                 // Initialize global gain
                 synth.setGlobalGain(data.globalGain || 0);
@@ -60,12 +69,10 @@ export const useOrganStore = defineStore('organ', {
                 // Refresh recents
                 this.fetchRecents();
 
-                // Load internal saved state if exists (using unique sourcePath)
+                // Load internal saved state if exists
                 const savedState = await (window as any).myApi.loadOrganState(this.organData.sourcePath);
                 if (savedState) {
                     if (savedState.banks) this.banks = savedState.banks;
-
-                    // Merge volumes: ODF defaults overwritten by saved state
                     if (savedState.stopVolumes) {
                         this.stopVolumes = { ...this.stopVolumes, ...savedState.stopVolumes };
                     }
@@ -73,12 +80,11 @@ export const useOrganStore = defineStore('organ', {
                         this.setUseReleaseSamples(savedState.useReleaseSamples);
                     }
                     if (savedState.outputDir) this.outputDir = savedState.outputDir;
+                    if (savedState.virtualStops) this.virtualStops = savedState.virtualStops;
                 }
             } else if (data?.error) {
                 console.error(data.error);
             }
-            // Ensure we unset restoring flag even if error, but wait for next tick to let watchers settle if needed?
-            // Actually synchronous unset is fine, watcher in component will run after this action completes (microtask).
             setTimeout(() => { this.isRestoring = false; }, 100);
         },
 
@@ -91,19 +97,16 @@ export const useOrganStore = defineStore('organ', {
             if (index === -1) {
                 this.currentCombination.push(stopId);
                 this.preloadStopSamples(stopId);
-                // Trigger for all active notes
                 this.activeMidiNotes.forEach(note => {
                     this.playPipe(note, stopId);
                 });
             } else {
                 this.currentCombination.splice(index, 1);
-                // Stop for all active notes
                 this.activeMidiNotes.forEach(note => {
                     synth.noteOff(note, stopId);
                 });
             }
 
-            // Real-time tremulant update
             if (stopId.startsWith('TREM_')) {
                 const activeTrems = this.currentCombination
                     .filter(id => id.startsWith('TREM_'))
@@ -114,7 +117,6 @@ export const useOrganStore = defineStore('organ', {
         },
 
         clearCombination() {
-            // Stop all playing pipes for all active stops
             this.currentCombination.forEach(stopId => {
                 this.activeMidiNotes.forEach(note => {
                     synth.noteOff(note, stopId);
@@ -135,11 +137,16 @@ export const useOrganStore = defineStore('organ', {
 
         async preloadStopSamples(stopId: string) {
             if (!this.organData) return;
-            const stop = this.organData.stops[stopId];
+            let actualStopId = stopId;
+            if (stopId.startsWith('VIRT_')) {
+                const vs = this.virtualStops.find(v => v.id === stopId);
+                if (!vs) return;
+                actualStopId = vs.originalStopId;
+            }
+
+            const stop = this.organData.stops[actualStopId];
             if (!stop) return;
 
-            // For real-time, we preload all pipes for this stop's ranks.
-            // This might be slow for huge organs, but essential for zero-latency.
             for (const rankId of stop.rankIds) {
                 const rank = this.organData.ranks[rankId];
                 if (rank) {
@@ -158,20 +165,15 @@ export const useOrganStore = defineStore('organ', {
                 this.midiStatus = 'Error';
                 return;
             }
-
-            // Cleanup existing if any
             if (this.midiAccess) {
                 this.stopMIDI();
             }
-
             navigator.requestMIDIAccess().then((access) => {
                 this.midiAccess = access;
                 this.midiStatus = access.inputs.size > 0 ? 'Connected' : 'Disconnected';
-
                 access.onstatechange = () => {
                     this.midiStatus = access.inputs.size > 0 ? 'Connected' : 'Disconnected';
                 };
-
                 access.inputs.forEach((input) => {
                     input.onmidimessage = (message) => this.handleMIDIMessage(message);
                 });
@@ -209,22 +211,34 @@ export const useOrganStore = defineStore('organ', {
         },
 
         async playPipe(note: number, stopId: string) {
-            const stop = this.organData.stops[stopId];
+            let actualStopId = stopId;
+            let pitchShift = 0;
+            let harmonicMultiplier = 1;
+            let noteOffset = 0;
+
+            if (stopId.startsWith('VIRT_')) {
+                const vs = this.virtualStops.find(v => v.id === stopId);
+                if (!vs) return;
+                actualStopId = vs.originalStopId;
+                pitchShift = vs.pitchShift || 0;
+                harmonicMultiplier = vs.harmonicMultiplier || 1;
+                noteOffset = vs.noteOffset || 0;
+            }
+
+            const stop = this.organData.stops[actualStopId];
             if (!stop) return;
+
+            const adjustedNote = note + noteOffset;
 
             stop.rankIds.forEach(async (rankId: string) => {
                 const rank = this.organData.ranks[rankId];
                 if (rank) {
-                    const pipe = rank.pipes.find((p: any) => p.midiNote === note) || rank.pipes[note - 36];
+                    const pipe = rank.pipes.find((p: any) => p.midiNote === adjustedNote) || rank.pipes[adjustedNote - 36];
                     if (pipe) {
                         const manual = this.organData.manuals.find((m: any) => String(m.id) === String(stop.manualId));
                         const isPedal = manual?.name.toLowerCase().includes('pedal') || false;
-
-                        // Unified Gain Summation (Manual + Stop + Rank + Pipe)
-                        // Organ Global Gain is handled by SynthEngine masterGain
                         const combinedGain = (manual?.gain || 0) + (stop.gain || 0) + (rank.gain || 0) + (pipe.gain || 0);
 
-                        // Find active tremulants for this manual
                         const activeTremulants = this.currentCombination
                             .filter(id => id.startsWith('TREM_'))
                             .map(id => {
@@ -233,6 +247,8 @@ export const useOrganStore = defineStore('organ', {
                             })
                             .filter(trem => trem && (!trem.manualId || String(trem.manualId) === String(manual?.id)));
 
+                        // note is the original key (for release tracking)
+                        // adjustedNote is the target pitch base
                         await synth.noteOn(
                             note,
                             stopId,
@@ -240,11 +256,13 @@ export const useOrganStore = defineStore('organ', {
                             pipe.releasePath,
                             this.stopVolumes[stopId] || 100,
                             combinedGain,
-                            pipe.tuning || 0,
-                            pipe.harmonicNumber || 1,
+                            0, // ODF tuning ignored
+                            (pipe.harmonicNumber || 1) * harmonicMultiplier,
                             isPedal,
                             manual?.id,
-                            activeTremulants
+                            activeTremulants,
+                            pitchShift,
+                            adjustedNote
                         );
                     }
                 }
@@ -269,7 +287,6 @@ export const useOrganStore = defineStore('organ', {
 
         addBank() {
             if (this.banks.length >= 32) return false;
-
             const newBank: Bank = {
                 id: crypto.randomUUID(),
                 name: `Bank ${this.banks.length + 1}`,
@@ -283,16 +300,11 @@ export const useOrganStore = defineStore('organ', {
         loadBank(index: number) {
             const bank = this.banks[index];
             if (!bank) return;
-
-            // Apply volumes first
             this.stopVolumes = { ...this.stopVolumes, ...bank.stopVolumes };
-
-            // Identify stops to turn off vs on
             const newCombo = new Set(bank.combination);
             const contentToTurnOff = this.currentCombination.filter(id => !newCombo.has(id));
             const contentToTurnOn = bank.combination.filter(id => !this.currentCombination.includes(id));
 
-            // Execute changes
             contentToTurnOff.forEach(id => {
                 this.currentCombination = this.currentCombination.filter(x => x !== id);
                 this.activeMidiNotes.forEach(note => synth.noteOff(note, id));
@@ -325,10 +337,26 @@ export const useOrganStore = defineStore('organ', {
             }
         },
 
-        // DEPRECATED: Old positional save, keeping for backward compat if needed but usually better to upgrade
+        addVirtualStop(stop: VirtualStop) {
+            this.virtualStops.push(stop);
+        },
+
+        updateVirtualStop(updatedStop: VirtualStop) {
+            const index = this.virtualStops.findIndex(v => v.id === updatedStop.id);
+            if (index > -1) {
+                this.virtualStops[index] = { ...updatedStop };
+            }
+        },
+
+        deleteVirtualStop(id: string) {
+            this.virtualStops = this.virtualStops.filter(v => v.id !== id);
+            this.currentCombination = this.currentCombination.filter(x => x !== id);
+            this.banks.forEach(bank => {
+                bank.combination = bank.combination.filter(x => x !== id);
+            });
+        },
+
         saveToBank(bankNumber: number) {
-            // no-op or redirect to addBank for now as requested user flow changed to 'add to end'
-            // But let's keep it capable of updating an existing index if we want 'Update Bank' feature later
             if (this.banks[bankNumber]) {
                 this.banks[bankNumber].combination = [...this.currentCombination];
                 this.banks[bankNumber].stopVolumes = { ...this.stopVolumes };
@@ -337,26 +365,12 @@ export const useOrganStore = defineStore('organ', {
 
         async renderAll() {
             if (!this.organData || this.banks.length === 0) return;
-
-            // First ensure we have an output dir (prompt user once)
-            if (!this.outputDir) {
-                // Trigger a dummy render or just select folder IPC?
-                // Let's rely on the first renderBank call to prompt.
-            }
-
             this.isRendering = true;
             this.renderStatus = 'Starting batch render...';
-
             try {
                 for (let i = 0; i < this.banks.length; i++) {
                     this.renderStatus = `Rendering Bank ${i + 1} / ${this.banks.length}...`;
-                    // We call renderBank internally. Note: renderBank sets isRendering=false in finally block
-                    // so we need to manage that or modify renderBank. 
-                    // Actually clearer to just duplicate the core rendering logic or make a private helper,
-                    // but for now, let's just await renderBank and reset isRendering to true immediately if needed.
-                    // Wait, calling renderBank will trigger the prompt if outputDir is empty.
-
-                    const result = await this.renderBank(i, true); // Pass true to 'keepAlive' to prevent it from setting isRendering=false
+                    const result = await this.renderBank(i, true);
                     if (result && result.status === 'cancelled') {
                         this.renderStatus = 'Batch render cancelled.';
                         break;
@@ -378,9 +392,8 @@ export const useOrganStore = defineStore('organ', {
             this.isRendering = true;
             this.renderProgress = 0;
 
-            // Listen for progress (renderer-side listener)
             const progressListener = (_event: any, progress: number) => {
-                this.renderProgress = progress / 100; // 0-1 for quasar
+                this.renderProgress = progress / 100;
             };
             (window as any).myApi.onRenderProgress(progressListener);
 
@@ -396,6 +409,23 @@ export const useOrganStore = defineStore('organ', {
                         volume: bank.stopVolumes[id] ?? this.stopVolumes[id] ?? 100,
                         gain: s.gain || 0
                     };
+                });
+
+                this.virtualStops.forEach(vs => {
+                    const originalStop = this.organData.stops[vs.originalStopId];
+                    if (originalStop) {
+                        cleanStops[vs.id] = {
+                            id: vs.id,
+                            name: vs.name,
+                            rankIds: [...originalStop.rankIds],
+                            manualId: originalStop.manualId,
+                            volume: bank.stopVolumes[vs.id] ?? vs.volume ?? 100,
+                            gain: originalStop.gain || 0,
+                            pitchShift: vs.pitchShift || 0,
+                            harmonicMultiplier: vs.harmonicMultiplier || 1,
+                            noteOffset: vs.noteOffset || 0
+                        };
+                    }
                 });
 
                 const cleanRanks: any = {};
@@ -448,13 +478,13 @@ export const useOrganStore = defineStore('organ', {
         },
 
         async saveInternalState() {
-            if (!this.organData || !this.organData.sourcePath) return; // Guard
-            // Deep clone to remove Vue Proxies before sending over IPC
+            if (!this.organData || !this.organData.sourcePath) return;
             const state = JSON.parse(JSON.stringify({
                 banks: this.banks,
                 stopVolumes: this.stopVolumes,
                 useReleaseSamples: this.useReleaseSamples,
-                outputDir: this.outputDir
+                outputDir: this.outputDir,
+                virtualStops: this.virtualStops
             }));
             await (window as any).myApi.saveOrganState(this.organData.sourcePath, state);
         },
@@ -465,7 +495,8 @@ export const useOrganStore = defineStore('organ', {
                 banks: this.banks,
                 stopVolumes: this.stopVolumes,
                 currentCombination: this.currentCombination,
-                useReleaseSamples: this.useReleaseSamples
+                useReleaseSamples: this.useReleaseSamples,
+                virtualStops: this.virtualStops
             };
             const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
             const url = URL.createObjectURL(blob);
@@ -496,6 +527,7 @@ export const useOrganStore = defineStore('organ', {
                         if (content.useReleaseSamples !== undefined) {
                             this.setUseReleaseSamples(content.useReleaseSamples);
                         }
+                        if (content.virtualStops) this.virtualStops = content.virtualStops;
                     } catch (err) {
                         console.error('Failed to parse JSON config', err);
                     }
@@ -506,4 +538,3 @@ export const useOrganStore = defineStore('organ', {
         }
     }
 });
-

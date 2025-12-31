@@ -1,8 +1,10 @@
 <template>
   <div class="drawknob-container q-ma-sm text-center">
-    <div class="knob-clickable" :class="{ 'is-active': active }" @click="$emit('toggle')">
+    <div class="knob-clickable" :class="{ 'is-active': active, 'is-virtual': isVirtual }" @click="$emit('toggle')">
       <!-- <div class="knob-stem"></div> -->
-      <div class="knob-head" :style="active ? 'background: #ffcc00; border-color: #d4af37;' : ''">
+      <div class="knob-head"
+        :style="active ? (isVirtual ? 'background: #00ff88; border-color: #00cc66;' : 'background: #ffcc00; border-color: #d4af37;') : ''">
+        <slot></slot>
         <div class="knob-label">
           <div class="stop-name">{{ name }}</div>
           <div class="stop-pitch">{{ pitch }}</div>
@@ -12,7 +14,7 @@
 
     <div class="volume-control q-mt-sm">
       <q-slider :model-value="volume" @update:model-value="$emit('update:volume', $event)" :min="0" :max="200" :step="1"
-        dense color="amber" class="volume-slider" />
+        dense :color="isVirtual ? 'green' : 'amber'" class="volume-slider" />
       <div class="volume-text">{{ volume }}%</div>
     </div>
   </div>
@@ -24,9 +26,10 @@ defineProps<{
   pitch: string;
   active: boolean;
   volume: number;
+  isVirtual?: boolean;
 }>();
 
-defineEmits(['toggle', 'update:volume']);
+defineEmits(['toggle', 'update:volume', 'delete']);
 </script>
 
 <style lang="scss" scoped>
@@ -34,6 +37,19 @@ defineEmits(['toggle', 'update:volume']);
   display: inline-block;
   width: 90px;
   vertical-align: top;
+  position: relative;
+}
+
+.delete-btn {
+  position: absolute;
+  top: 0;
+  right: 0;
+  opacity: 0.3;
+  transition: opacity 0.2s;
+
+  &:hover {
+    opacity: 1;
+  }
 }
 
 .knob-clickable {
@@ -47,6 +63,10 @@ defineEmits(['toggle', 'update:volume']);
   &.is-active {
     .knob-head {
       box-shadow: 0 5px 20px rgba(255, 204, 0, 0.5);
+    }
+
+    &.is-virtual .knob-head {
+      box-shadow: 0 5px 20px rgba(0, 255, 136, 0.5);
     }
   }
 }

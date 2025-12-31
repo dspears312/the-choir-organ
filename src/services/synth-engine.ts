@@ -7,12 +7,14 @@ export interface Voice {
     releasePath?: string | undefined;
     volume: number;
     gainDb: number;
-    tuning: number; // cents from ODF
+    tuning: number; // cents from ODF (usually ignored/broken)
     wavTuning: number; // cents from WAV metadata
     harmonicNumber: number;
     isPedal: boolean;
     manualId?: string | undefined;
     basePlaybackRate?: number;
+    pitchOffsetCents: number; // For virtual stop shift
+    renderingNote: number;    // For virtual stop transposition
 }
 
 export interface WavMetadata {
@@ -97,7 +99,9 @@ export class SynthEngine {
         harmonicNumber: number = 1,
         isPedal: boolean = false,
         manualId?: string,
-        activeTremulants: any[] = []
+        activeTremulants: any[] = [],
+        pitchOffsetCents: number = 0,
+        renderingNote?: number
     ) {
         if (this.context.state === 'suspended') {
             await this.context.resume();
@@ -139,8 +143,9 @@ export class SynthEngine {
         }
 
         let wavTuning = 0;
+        const pitchRefNote = renderingNote !== undefined ? renderingNote : note;
         if (meta && meta.unityNote !== undefined && !isNaN(meta.unityNote) && meta.unityNote > 0 && meta.unityNote < 128) {
-            wavTuning = (note - meta.unityNote) * 100;
+            wavTuning = (pitchRefNote - meta.unityNote) * 100;
             if (meta.pitchFraction !== undefined && !isNaN(meta.pitchFraction) && meta.pitchFraction !== 0) {
                 const fractionCents = (meta.pitchFraction / 4294967296) * 100;
                 wavTuning -= fractionCents;
@@ -148,8 +153,9 @@ export class SynthEngine {
         }
 
         const harmonicCents = 1200 * Math.log2(harmonicNumber / 8);
-        // DO NOT USE pipe tuning. It is broken and will cause heinous audio errors.
-        const totalCents = wavTuning + harmonicCents;
+        // DO NOT USE pipe tuning from ODF. It is broken and will cause heinous audio errors.
+        // We only use the virtual stop pitchOffsetCents.
+        const totalCents = wavTuning + harmonicCents + pitchOffsetCents;
         if (!isNaN(totalCents) && totalCents !== 0) {
             source.playbackRate.value = Math.pow(2, totalCents / 1200);
         }
@@ -184,7 +190,9 @@ export class SynthEngine {
             harmonicNumber,
             isPedal,
             manualId,
-            basePlaybackRate: source.playbackRate.value
+            basePlaybackRate: source.playbackRate.value,
+            pitchOffsetCents,
+            renderingNote: renderingNote ?? note
         };
         this.activeVoices.push(voice);
 
@@ -299,8 +307,8 @@ export class SynthEngine {
                 relSource.buffer = relBuffer;
 
                 const harmonicCents = 1200 * Math.log2(voice.harmonicNumber / 8);
-                // DO NOT USE pipe tuning from ODF. It is broken and will cause heinous audio errors.
-                const totalCents = (voice.wavTuning || 0) + harmonicCents;
+                // Use stored virtual offsets for release too
+                const totalCents = (voice.wavTuning || 0) + harmonicCents + (voice.pitchOffsetCents || 0);
                 if (!isNaN(totalCents) && totalCents !== 0) {
                     relSource.playbackRate.value = Math.pow(2, totalCents / 1200);
                 }

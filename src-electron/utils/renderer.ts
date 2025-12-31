@@ -13,9 +13,10 @@ export interface RenderPipe {
     volume: number;
     isPedal: boolean;
     gain: number; // in dB
-    tuning: number; // in cents
+    pitchOffsetCents?: number; // For virtual stop shift
     harmonicNumber: number;
     manualId?: string;
+    renderingNote?: number; // For virtual stop transposition
 }
 
 export async function renderNote(
@@ -43,63 +44,37 @@ export async function renderNote(
             }
 
             const stopVolumeScale = pipe.volume / 100;
-            // Hierarchical Gain: organ global + (manual + stop + rank + pipe pre-summed in electron-main)
             const combinedGainDb = (globalGainDb || 0) + (pipe.gain || 0);
             const odfGainLinear = Math.pow(10, combinedGainDb / 20);
-            const masterAttenuation = 0.5; // Headroom scaling matching SynthEngine
+            const masterAttenuation = 0.5;
 
             // Tuning calculation
             let wavTuningPercent = 0;
+            const pitchRefNote = pipe.renderingNote !== undefined ? pipe.renderingNote : note;
 
-            // Guard: MIDI Unity Note must be 0-127. Ignore garbage values or 0.
             if (wavInfo.unityNote !== undefined && !isNaN(wavInfo.unityNote) && wavInfo.unityNote > 0 && wavInfo.unityNote < 128) {
-                // Base shift from unity note
-                wavTuningPercent = (note - wavInfo.unityNote) * 100;
+                wavTuningPercent = (pitchRefNote - wavInfo.unityNote) * 100;
 
                 if (wavInfo.pitchFraction !== undefined && !isNaN(wavInfo.pitchFraction) && wavInfo.pitchFraction !== 0) {
-                    // Convert 1/2^32 semitone units to cents
                     const fractionCents = (wavInfo.pitchFraction / 4294967296) * 100;
                     wavTuningPercent -= fractionCents;
                 }
             }
 
             const harmonicCents = 1200 * Math.log2(pipe.harmonicNumber / 8);
-            // DO NOT USE pipe.tuning. It is broken and will cause heinous audio errors.
-            const totalCents = /*(pipe.tuning || 0) +*/ wavTuningPercent + harmonicCents;
-            // Pitch factor based on note difference
+            // We ignore pipe.tuning as per user instruction and use virtual pitchOffsetCents
+            const totalCents = (pipe.pitchOffsetCents || 0) + wavTuningPercent + harmonicCents;
             const pitchRate = isNaN(totalCents) ? 1.0 : Math.pow(2, totalCents / 1200);
 
-            // Sample Rate compensation: source / target
-            // If source is 48k and target is 44k, we must play faster (rate > 1)? 
-            // Wait. If I have 1 second of audio at 48k (48000 samples).
-            // If I play it at 44100 Hz, it takes 48000/44100 = 1.08 seconds. It plays SLOWER (pitched down).
-            // To pitch it correctly, we need to advance through source buffer FASTER.
-            // step = 48000 / 44100 = 1.088
             const rateRatio = (wavInfo.sampleRate || 44100) / sampleRate;
-            console.log(wavInfo.sampleRate, sampleRate, rateRatio);
-
             const playbackRate = pitchRate * rateRatio;
 
-            // Graded Pedals compensation (matching SynthEngine)
             let pedalScale = 1.0;
             if (pipe.isPedal) {
-                // Fade to 0 by Middle C (MIDI 60). Range 36-60 = 24 steps.
                 pedalScale = Math.max(0, 1.0 - (note - 36) * (1.0 / 24));
             }
 
             const finalScale = stopVolumeScale * odfGainLinear * (FIXED_ATTENUATION * masterAttenuation) * pedalScale;
-            if (finalScale === 0) {
-                console.warn(`Final scale is 0 for pipe: ${pipe.path} (Vol: ${pipe.volume}, Gain: ${pipe.gain})`);
-            }
-
-            // Diagnostic log matching SynthEngine
-            const fractionCents = (wavInfo.pitchFraction || 0) / 4294967296 * 100;
-            console.log(`[Renderer] Pipe Diagnostic:
-              Path: ${path.basename(pipe.path)}
-              Note: ${note}
-              WAV Meta: Unity=${wavInfo.unityNote}, Fraction=${fractionCents.toFixed(2)}c
-              Final Tuning: ${totalCents.toFixed(2)}c
-              PlaybackRate: ${playbackRate.toFixed(4)}`);
 
             const tremulantsForPipe = activeTremulants.filter(t => !t.manualId || String(t.manualId) === String(pipe.manualId));
 
@@ -110,33 +85,24 @@ export async function renderNote(
         }
     }
 
-    if (activePipeCount === 0) {
-        console.error(`No pipes were layered for track ${trackNumber}! Output will be silent.`);
-    }
+    if (activePipeCount === 0) return; // Silent output, skip writing file
 
     const int16Buffer = [new Int16Array(totalSamples), new Int16Array(totalSamples)];
-    let peak = 0;
     for (let c = 0; c < 2; c++) {
         const channel = outputBuffer[c];
         const target = int16Buffer[c];
         if (!channel || !target) continue;
         for (let i = 0; i < totalSamples; i++) {
             let sample = channel[i] || 0;
-            const abs = Math.abs(sample);
-            if (abs > peak) peak = abs;
-
             if (sample > 1.0) sample = 1.0;
             else if (sample < -1.0) sample = -1.0;
             target[i] = Math.round(sample * 32767);
         }
     }
 
-    console.log(`Rendered track ${trackNumber}: Peak amplitude ${peak.toFixed(4)}, Active pipes: ${activePipeCount}`);
-
     const wav = new WaveFile();
     wav.fromScratch(2, sampleRate, '16', int16Buffer);
 
-    // Manually set looping metadata for Tsunami
     if (!(wav as any).smpl) {
         (wav as any).smpl = { loops: [] };
     }
@@ -149,8 +115,6 @@ export async function renderNote(
         dwPlayCount: 0
     }];
 
-    // Four-digit zero-padded filename (NNNN.wav)
-    // trackNumber passed from main logic already accounts for offset (note + bank*128)
     const fileName = `${trackNumber.toString().padStart(4, '0')}.wav`;
     const filePath = path.join(outputDir, fileName);
     fs.writeFileSync(filePath, wav.toBuffer());
@@ -181,29 +145,23 @@ function layerSample(
         let currentScale = scale;
         let currentPlaybackRate = playbackRate;
 
-        // Apply Tremulants (LFO)
         for (const trem of tremulants) {
-            // GrandOrgue specifies that if Wave tremulant samples are missing, it should fallback to Synth.
-            // Also, many organs don't specify modulation depths and expect engine defaults.
             let ampDepth = trem.ampModDepth || 0;
             let pitchDepth = trem.pitchModDepth || 0;
 
-            // Fallback for Wave tremulants or Synth tremulants with 0 depths
             if (ampDepth === 0 && pitchDepth === 0) {
-                ampDepth = 10;   // 10% volume modulation
-                pitchDepth = 1.0; // 1% pitch modulation
+                ampDepth = 10;
+                pitchDepth = 1.0;
             }
 
             const timeInSec = i / sampleRate;
             const phase = (timeInSec * 1000 / (trem.period || 200)) * 2 * Math.PI;
 
-            // Amplitude Modulation
             if (ampDepth > 0) {
                 const ampMod = 1 + (ampDepth / 100) * Math.sin(phase);
                 currentScale *= ampMod;
             }
 
-            // Frequency Modulation (Pitch)
             if (pitchDepth > 0) {
                 const freqMod = 1 + (pitchDepth / 100) * Math.sin(phase);
                 currentPlaybackRate *= freqMod;

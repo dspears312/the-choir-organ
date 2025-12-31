@@ -77,11 +77,42 @@
               </div>
               <div class="stops-grid row justify-center q-gutter-md">
                 <template v-for="stopId in manual.stopIds" :key="`${manual.id}-${stopId}`">
-                  <Drawknob v-if="organStore.organData.stops[stopId]" :name="organStore.organData.stops[stopId].name"
-                    :pitch="getStopPitch(organStore.organData.stops[stopId])"
+                  <!-- <div class="relative-position inline-block"> -->
+                  <Drawknob v-if="organStore.organData.stops[stopId]"
+                    :name="parseStopLabel(organStore.organData.stops[stopId].name).name"
+                    :pitch="parseStopLabel(organStore.organData.stops[stopId].name).pitch"
                     :active="organStore.currentCombination.includes(stopId)"
                     :volume="organStore.stopVolumes[stopId] || 100" @toggle="organStore.toggleStop(stopId)"
-                    @update:volume="organStore.setStopVolume(stopId, $event)" />
+                    @update:volume="organStore.setStopVolume(stopId, $event)">
+                    <q-menu touch-position context-menu class="bg-grey-10 text-amber">
+                      <q-list dense style="min-width: 150px">
+                        <q-item clickable v-close-popup @click="openCreateVirtualStop(stopId)">
+                          <q-item-section avatar><q-icon name="add_circle" color="green" /></q-item-section>
+                          <q-item-section>Create Virtual stop</q-item-section>
+                        </q-item>
+                      </q-list>
+                    </q-menu>
+                  </Drawknob>
+                  <!-- </div> -->
+
+                  <Drawknob v-for="vs in getVirtualStopsFor(stopId)" :key="vs.id" :name="vs.name" :pitch="vs.pitch"
+                    :active="organStore.currentCombination.includes(vs.id)"
+                    :volume="organStore.stopVolumes[vs.id] || 100" :is-virtual="true"
+                    @toggle="organStore.toggleStop(vs.id)" @update:volume="organStore.setStopVolume(vs.id, $event)"
+                    @delete="organStore.deleteVirtualStop(vs.id)">
+                    <q-menu touch-position context-menu class="bg-grey-10 text-amber">
+                      <q-list dense style="min-width: 150px">
+                        <q-item clickable v-close-popup @click="openEditVirtualStop(vs)">
+                          <q-item-section avatar><q-icon name="edit" color="blue" /></q-item-section>
+                          <q-item-section>Edit Virtual stop</q-item-section>
+                        </q-item>
+                        <q-item clickable v-close-popup @click="organStore.deleteVirtualStop(vs.id)">
+                          <q-item-section avatar><q-icon name="delete" color="red" /></q-item-section>
+                          <q-item-section>Delete Virtual stop</q-item-section>
+                        </q-item>
+                      </q-list>
+                    </q-menu>
+                  </Drawknob>
                 </template>
               </div>
             </div>
@@ -161,16 +192,9 @@
             <q-separator color="grey-9" class="q-my-sm" />
 
             <div class="row q-gutter-x-sm">
-              <!-- <q-btn color="red-10" label="Render" class="col font-cinzel q-py-sm shadow-10"
-                :loading="organStore.isRendering" :disable="!organStore.banks[selectedBank]"
-                @click="organStore.renderBank(selectedBank)">
-                <template v-slot:loading>Mixing...</template>
-              </q-btn> -->
-
               <q-btn color="red-10" label="Burn to Card" class="col font-cinzel q-py-sm shadow-10"
                 :loading="organStore.isRendering" :disable="organStore.banks.length === 0"
                 @click="organStore.renderAll()" icon-right="sd_card">
-                <!-- <template v-slot:loading>Rendering...</template> -->
               </q-btn>
             </div>
 
@@ -178,7 +202,8 @@
               <div class="text-caption text-amber text-center q-mb-xs">
                 {{ organStore.renderStatus || 'Rendering...' }}
               </div>
-              <q-linear-progress :value="organStore.renderProgress" color="amber" size="8px" rounded class="q-mb-sm" />
+              <q-linear-progress :value="organStore.renderProgress" color="amber" size="8px" rounded
+                class="q-linear-progress--animate" />
               <div class="row items-center justify-between">
                 <div class="text-xs text-grey-6">{{ Math.round(organStore.renderProgress * 100) }}%</div>
                 <q-btn flat dense color="red-5" label="Cancel" size="sm" icon="close"
@@ -211,16 +236,121 @@
 
       </div>
     </div>
+
+    <!-- Create/Edit Virtual Stop Dialog -->
+    <q-dialog v-model="showVsDialog" persistent>
+      <q-card dark style="min-width: 400px; background: #1a1a1a; border: 1px solid #444;" class="q-pa-sm">
+        <q-card-section class="row items-center q-pb-none">
+          <div class="text-h6 font-cinzel text-amber">{{ vsForm.id ? 'Edit' : 'Create' }} Virtual Stop</div>
+          <q-space />
+          <q-btn icon="close" flat round dense v-close-popup />
+        </q-card-section>
+
+        <q-card-section class="q-pt-md column q-gutter-y-md">
+          <q-input v-model="vsForm.name" label="Name" dark color="green" filled />
+          <q-input v-model="vsForm.pitch" label="Pitch Label (e.g. 16')" dark color="green" filled />
+
+          <div class="row q-col-gutter-sm">
+            <div class="col-12 text-caption text-grey-5">Pitch Shift (Cents)</div>
+            <div class="col-12">
+              <q-input v-model.number="vsForm.pitchShift" type="number" dark filled color="green" dense />
+            </div>
+
+            <div class="col-12 text-caption text-grey-5">Harmonic Multiplier</div>
+            <div class="col-12">
+              <q-input v-model.number="vsForm.harmonicMultiplier" type="number" step="0.01" dark filled color="green"
+                dense />
+            </div>
+
+            <div class="col-12 text-caption text-grey-5">Note Offset (Semitones)</div>
+            <div class="col-12">
+              <q-input v-model.number="vsForm.noteOffset" type="number" dark filled color="green" dense />
+            </div>
+          </div>
+        </q-card-section>
+
+        <q-card-actions align="right" class="q-pa-md">
+          <q-btn flat label="Cancel" v-close-popup />
+          <q-btn :label="vsForm.id ? 'Save' : 'Create'" color="green" @click="saveVirtualStop" v-close-popup />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+
   </q-page>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import { useOrganStore } from 'src/stores/organ';
 import Drawknob from 'src/components/Drawknob.vue';
+import { parseStopLabel } from 'src/utils/label-parser';
 
 const organStore = useOrganStore();
 const selectedBank = ref(-1);
+
+// Virtual Stop logic
+const showVsDialog = ref(false);
+const vsForm = ref({
+  id: undefined as string | undefined, // undefined for new, set for edit
+  originalStopId: '',
+  name: '',
+  pitch: '',
+  pitchShift: 0,
+  harmonicMultiplier: 1.0,
+  noteOffset: 0
+});
+
+function openCreateVirtualStop(stopId: string) {
+  const stop = organStore.organData.stops[stopId];
+  if (!stop) return;
+
+  const { name, pitch } = parseStopLabel(stop.name);
+  vsForm.value = {
+    id: undefined,
+    originalStopId: stopId,
+    name: name + ' (V)',
+    pitch: pitch,
+    pitchShift: 0,
+    harmonicMultiplier: 1.0,
+    noteOffset: 0
+  };
+  showVsDialog.value = true;
+}
+
+function openEditVirtualStop(vs: any) {
+  vsForm.value = {
+    id: vs.id,
+    originalStopId: vs.originalStopId,
+    name: vs.name,
+    pitch: vs.pitch,
+    pitchShift: vs.pitchShift,
+    harmonicMultiplier: vs.harmonicMultiplier,
+    noteOffset: vs.noteOffset
+  };
+  showVsDialog.value = true;
+}
+
+function saveVirtualStop() {
+  const vs = {
+    id: vsForm.value.id || 'VIRT_' + crypto.randomUUID(),
+    originalStopId: vsForm.value.originalStopId,
+    name: vsForm.value.name,
+    pitch: vsForm.value.pitch,
+    pitchShift: vsForm.value.pitchShift,
+    harmonicMultiplier: vsForm.value.harmonicMultiplier,
+    noteOffset: vsForm.value.noteOffset
+  };
+
+  if (vsForm.value.id) {
+    organStore.updateVirtualStop(vs);
+  } else {
+    organStore.addVirtualStop(vs);
+  }
+}
+
+function getVirtualStopsFor(stopId: string) {
+  return organStore.virtualStops.filter(v => v.originalStopId === stopId);
+}
 
 function selectBank(index: number) {
   selectedBank.value = index;
@@ -229,7 +359,6 @@ function selectBank(index: number) {
 
 function addNewBank() {
   if (organStore.addBank()) {
-    // Auto-select new bank
     selectedBank.value = organStore.banks.length - 1;
   }
 }
@@ -241,14 +370,11 @@ const midiColor = computed(() => {
 });
 
 function getStopPitch(stop: any) {
-  if (!stop) return '8\'';
-  const match = stop.name.match(/\d+'/);
-  return match ? match[0] : '8\'';
+  return parseStopLabel(stop?.name || '').pitch;
 }
 
 function getBasename(path: string) {
   if (!path || typeof path !== 'string') return '';
-  // Basic basename logic for display
   return path.split(/[\\/]/).pop() || path;
 }
 
@@ -263,10 +389,8 @@ onUnmounted(() => {
   organStore.stopMIDI();
 });
 
-// Auto-save logic
-import { watch } from 'vue';
 watch(
-  () => [organStore.banks, organStore.stopVolumes, organStore.useReleaseSamples, organStore.outputDir],
+  () => [organStore.banks, organStore.stopVolumes, organStore.useReleaseSamples, organStore.outputDir, organStore.virtualStops],
   () => {
     if (organStore.organData && !organStore.isRestoring) {
       organStore.saveInternalState();
@@ -274,27 +398,6 @@ watch(
   },
   { deep: true }
 );
-
-function goToPreview() {
-  if (organStore.outputDir) {
-    // We can pass it via query prop if we want, or store it in a global/store that Tsunami page reads.
-    // But the previous request asked to "pass the folder path".
-    // Let's use query param for explicitness, or rely on store persistence if Tsunami page reads it?
-    // Tsunami page currently reads `folderPath` ref. Let's update Tsunami page to read store or query.
-    // Actually, Tsunami Page is separate. Let's pass it in query.
-    // Wait, Tsunami page doesn't read query yet. Let's add that next.
-    // For now, let's just push to /preview?path=...
-    // But path might be long.
-    // Let's rely on the store having `outputDir`.
-    // organStore.outputDir is already persistent!
-    // So just navigating is enough, IF Tsunami page checks the store.
-
-    // Let's update Tsunami page to check organStore.outputDir on mount if local folderPath is empty.
-  }
-  // But user asked to "update the preview button... to pass the folder path".
-  // I'll update the router push to include query for robustness.
-  /* $router.push({ path: '/preview', query: { folder: organStore.outputDir } }) */
-}
 </script>
 
 <style lang="scss" scoped>
@@ -335,7 +438,6 @@ function goToPreview() {
   background: #080808;
   background-image:
     linear-gradient(rgba(0, 0, 0, 0.7), rgba(0, 0, 0, 0.7));
-  /* Optional texture placeholder */
   background-size: cover;
 }
 
@@ -358,52 +460,10 @@ function goToPreview() {
   display: inline-block;
 }
 
-.control-panel {
-  background: #151515;
-  border: 1px solid #333;
-  border-radius: 12px;
-}
-
-.bank-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
-
-.bank-btn {
-  border: 1px solid #333;
-  border-radius: 4px;
-  background: #222;
-  color: #888;
-
-  &:hover {
-    background: #333;
-    border-color: #555;
-  }
-
-  &.is-active {
-    border-color: #d4af37;
-    color: #d4af37;
-    background: rgba(212, 175, 55, 0.1);
-  }
-
-  &.has-data {
-    border-left: 3px solid #2e7d32;
-  }
-}
-
 .bank-active {
   background: rgba(212, 175, 55, 0.15);
   border: 1px solid #d4af37;
   border-radius: 4px;
-}
-
-.opacity-50 {
-  opacity: 0.5;
-}
-
-.hover-opacity-100:hover {
-  opacity: 1;
 }
 
 .bg-dark-sidebar {
