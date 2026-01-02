@@ -3,6 +3,8 @@ import fs from 'fs';
 import path from 'path';
 import { OrganData, OrganStop, OrganManual, OrganRank, OrganPipe, OrganTremulant, NOISE_KEYWORDS } from './odf-parser';
 
+const GLOBAL_ATTENUATION = 14;
+
 /**
  * Parses Hauptwerk XML organ definition files.
  * Correctly resolves sample paths across distributed Installation Packages
@@ -47,9 +49,14 @@ export function parseHauptwerk(filePath: string): OrganData {
     });
     console.log(`[HauptwerkParser] Indexed ${sampleIndex.size} sample files total.`);
 
+    let globalGain = parseFloat(general?.AudioOut_AmplitudeLevelAdjustDecibels || general?.AmplitudeLevelAdjustDecibels || '0');
+    // If the file specifies 0 (or defaults to 0), it usually means "no adjustment", 
+    // but without internal engine headroom, this clips. Default to -14dB for safety.
+    if (globalGain === 0) globalGain = -GLOBAL_ATTENUATION;
+
     const organData: OrganData = {
         name: organName,
-        globalGain: parseFloat(general?.AudioOut_AmplitudeLevelAdjustDecibels || '0'),
+        globalGain,
         stops: {},
         manuals: [],
         ranks: {},
@@ -224,7 +231,10 @@ export function parseHauptwerk(filePath: string): OrganData {
             wavPath,
             releasePath: relPathStr,
             midiNote,
-            gain: parseFloat(p.p || p.AmplitudeLevelAdjustDecibels || '0'),
+            // 'p' is Gain (likely AudioOut_AmplitudeLevelAdjustDecibels)
+            // 'n' is Stereo Pan
+            gain: .5, //parseFloat(p.p || p.AmplitudeLevelAdjustDecibels || '0') - GLOBAL_ATTENUATION,
+            pan: parseFloat(p.n || p.Pan || '0'),
             tuning: 0,
             harmonicNumber,
         });

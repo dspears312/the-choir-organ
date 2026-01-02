@@ -154,12 +154,13 @@ export const useOrganStore = defineStore('organ', {
             const index = this.currentCombination.indexOf(stopId);
             if (index === -1) {
                 this.currentCombination.push(stopId);
-                this.preloadStopSamples(stopId);
+                synth.markStopSelected(stopId);
                 this.activeMidiNotes.forEach(note => {
                     this.playPipe(note, stopId);
                 });
             } else {
                 this.currentCombination.splice(index, 1);
+                synth.markStopDeselected(stopId);
                 this.activeMidiNotes.forEach(note => {
                     synth.noteOff(note, stopId);
                 });
@@ -176,6 +177,7 @@ export const useOrganStore = defineStore('organ', {
 
         clearCombination() {
             this.currentCombination.forEach(stopId => {
+                synth.markStopDeselected(stopId);
                 this.activeMidiNotes.forEach(note => {
                     synth.noteOff(note, stopId);
                 });
@@ -194,28 +196,7 @@ export const useOrganStore = defineStore('organ', {
         },
 
         async preloadStopSamples(stopId: string) {
-            if (!this.organData) return;
-            let actualStopId = stopId;
-            if (stopId.startsWith('VIRT_')) {
-                const vs = this.virtualStops.find(v => v.id === stopId);
-                if (!vs) return;
-                actualStopId = vs.originalStopId;
-            }
-
-            const stop = this.organData.stops[actualStopId];
-            if (!stop) return;
-
-            for (const rankId of stop.rankIds) {
-                const rank = this.organData.ranks[rankId];
-                if (rank) {
-                    for (const pipe of rank.pipes) {
-                        await synth.loadSample(stopId, pipe.wavPath);
-                        if (pipe.releasePath) {
-                            await synth.loadSample(stopId, pipe.releasePath);
-                        }
-                    }
-                }
-            }
+            // No-op in on-demand mode.
         },
 
         initMIDI() {
@@ -276,8 +257,9 @@ export const useOrganStore = defineStore('organ', {
             if (type === 144 && velocity > 0) { // Note On
                 this.activeMidiNotes.add(note);
                 if (this.isSynthEnabled) {
-                    this.currentCombination.forEach(async (stopId) => {
-                        await this.playPipe(note, stopId);
+                    // Fire all stop playbacks in parallel
+                    this.currentCombination.forEach((stopId) => {
+                        this.playPipe(note, stopId);
                     });
                 }
             } else if (type === 128 || (type === 144 && velocity === 0)) { // Note Off
@@ -311,6 +293,7 @@ export const useOrganStore = defineStore('organ', {
 
             const adjustedNote = note + noteOffset;
 
+            // Fire all ranks in parallel
             stop.rankIds.forEach(async (rankId: string) => {
                 const rank = this.organData.ranks[rankId];
                 if (rank) {
@@ -330,7 +313,8 @@ export const useOrganStore = defineStore('organ', {
 
                         // note is the original key (for release tracking)
                         // adjustedNote is the target pitch base
-                        await synth.noteOn(
+                        // Don't await here, let synth.noteOn handle its own wait and global throttle
+                        synth.noteOn(
                             note,
                             stopId,
                             pipe.wavPath,
@@ -450,6 +434,7 @@ export const useOrganStore = defineStore('organ', {
 
             contentToTurnOff.forEach(id => {
                 this.currentCombination = this.currentCombination.filter(x => x !== id);
+                synth.markStopDeselected(id);
                 if (this.isSynthEnabled) {
                     this.activeMidiNotes.forEach(note => synth.noteOff(note, id));
                 }
@@ -458,6 +443,7 @@ export const useOrganStore = defineStore('organ', {
             contentToTurnOn.forEach(id => {
                 if (!this.currentCombination.includes(id)) {
                     this.currentCombination.push(id);
+                    synth.markStopSelected(id);
                     if (this.isSynthEnabled) {
                         this.preloadStopSamples(id);
                         this.activeMidiNotes.forEach(note => this.playPipe(note, id));

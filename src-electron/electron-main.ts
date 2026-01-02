@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain, dialog, protocol, net, shell } from 'elect
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { fileURLToPath } from 'url'
+import { fileURLToPath, pathToFileURL } from 'url'
 import { setImmediate } from 'timers';
 import { exec } from 'child_process';
 import { parseODF } from './utils/odf-parser';
@@ -12,6 +12,7 @@ import { readWav } from './utils/wav-reader';
 import { addToRecent, getRecents, saveOrganState, loadOrganState, removeFromRecent } from './utils/persistence';
 import { handleRarExtraction } from './utils/archive-handler';
 import { scanOrganDependencies } from './utils/organ-manager';
+import { createPartialWav } from './utils/partial-wav';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const { autoUpdater } = require('electron-updater');
@@ -39,10 +40,20 @@ const platform = process.platform || os.platform();
 
 const currentDir = fileURLToPath(new URL('.', import.meta.url));
 
-// Register tsunami protocol as privileged for media streaming
+// Register protocols as privileged for media streaming
 protocol.registerSchemesAsPrivileged([
   {
     scheme: 'tsunami',
+    privileges: {
+      stream: true,
+      bypassCSP: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true
+    }
+  },
+  {
+    scheme: 'organ-sample',
     privileges: {
       stream: true,
       bypassCSP: true,
@@ -455,16 +466,6 @@ ipcMain.handle('read-text-file', async (event, filePath: string) => {
   }
 });
 
-ipcMain.handle('read-file-arraybuffer', async (event, filePath: string) => {
-  try {
-    const buffer = fs.readFileSync(filePath);
-    return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
-  } catch (e) {
-    console.error(`Failed to read file as array buffer: ${filePath}`, e);
-    throw e;
-  }
-});
-
 ipcMain.handle('select-folder', async () => {
   const result = await dialog.showOpenDialog({
     properties: ['openDirectory'],
@@ -475,7 +476,7 @@ ipcMain.handle('select-folder', async () => {
 
 ipcMain.handle('get-wav-info', async (event, filePath: string) => {
   try {
-    const info = readWav(filePath);
+    const info = readWav(filePath, undefined, true);
     const { data: _data, ...metadata } = info;
     return metadata;
   } catch (e) {
@@ -727,10 +728,44 @@ void app.whenReady().then(() => {
         console.warn(`File not found for tsunami stream: ${filePath}`);
         return new Response('File not found', { status: 404 });
       }
-      return net.fetch('file://' + filePath);
+      return net.fetch(pathToFileURL(filePath).toString());
     } catch (e) {
       console.error('Tsunami protocol error:', e);
       return new Response('Error', { status: 500 });
+    }
+  });
+
+  // High-performance protocol for organ samples
+  protocol.handle('organ-sample', (request) => {
+    try {
+      const url = new URL(request.url);
+      const filePath = url.searchParams.get('path');
+      const isPartial = url.searchParams.get('type') === 'partial';
+
+      if (!filePath) {
+        console.error('Organ-sample request missing path:', request.url);
+        return new Response('Missing path', { status: 400 });
+      }
+
+      if (!fs.existsSync(filePath)) {
+        console.warn(`Organ-sample file not found: ${filePath}`);
+        return new Response('File not found', { status: 404 });
+      }
+
+      if (isPartial) {
+        const partialBuffer = createPartialWav(filePath, 24000); // 1s at 48k
+        if (partialBuffer) {
+          return new Response(partialBuffer as any, {
+            headers: { 'Content-Type': 'audio/wav' }
+          });
+        }
+      }
+
+      // Default: Serve full file
+      return net.fetch(pathToFileURL(filePath).toString());
+    } catch (e) {
+      console.error('Organ-sample protocol error:', e);
+      return new Response('Internal error', { status: 500 });
     }
   });
 

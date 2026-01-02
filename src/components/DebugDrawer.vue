@@ -1,5 +1,5 @@
 <template>
-    <q-drawer :model-value="debugStore.isOpen" side="right" bordered dark behavior="overlay" :width="400"
+    <q-drawer :model-value="debugStore.isOpen" side="right" bordered dark behavior="desktop" :width="400"
         class="bg-dark-sidebar" @update:model-value="(v) => !v && debugStore.close()">
         <div class="column full-height">
             <!-- Header -->
@@ -38,10 +38,60 @@
 import { computed, ref, watch } from 'vue';
 import { useDebugStore } from 'src/stores/debug';
 import { useOrganStore } from 'src/stores/organ';
+import { synth } from 'src/services/synth-engine';
+import { onMounted, onUnmounted } from 'vue';
 
 const debugStore = useDebugStore();
 const organStore = useOrganStore();
-const expandedKeys = ref<string[]>(['root', 'global']);
+const expandedKeys = ref<string[]>(['root', 'global', 'synth-stats']);
+const synthStats = ref(synth.getStats());
+
+let statsTimer: any = null;
+
+onMounted(() => {
+    statsTimer = setInterval(() => {
+        if (debugStore.isOpen) {
+            synthStats.value = synth.getStats();
+        }
+    }, 1000);
+});
+
+onUnmounted(() => {
+    if (statsTimer) clearInterval(statsTimer);
+});
+
+function getStopExpectedCount(stopId: string) {
+    if (!organStore.organData) return 0;
+    let actualStopId = stopId;
+    if (stopId.startsWith('VIRT_')) {
+        const vs = (organStore as any).virtualStops?.find((v: any) => v.id === stopId);
+        if (!vs) return 0;
+        actualStopId = vs.originalStopId;
+    }
+    const stop = organStore.organData.stops[actualStopId];
+    if (!stop) return 0;
+
+    let count = 0;
+    for (const rankId of stop.rankIds) {
+        const rank = organStore.organData.ranks[rankId];
+        if (rank) {
+            count += rank.pipes?.length || 0;
+            // Also count release samples if they would be loaded
+            rank.pipes?.forEach((p: any) => {
+                if (p.releasePath) count++;
+            });
+        }
+    }
+    return count;
+}
+
+function formatBytes(bytes: number) {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
 
 const treeNodes = computed(() => {
     if (!organStore.organData) return [];
@@ -75,14 +125,20 @@ const treeNodes = computed(() => {
                 };
             });
 
+            const isSelected = organStore.currentCombination.includes(stop.id);
+            const expected = getStopExpectedCount(stop.id);
+            const loaded = synth.getStopBufferCount(stop.id);
+            const percent = expected > 0 ? Math.round((loaded / expected) * 100) : 0;
+            const progressStr = isSelected && loaded < expected ? ` (${percent}% - ${loaded}/${expected})` : '';
+
             return {
-                label: stop.name,
+                label: stop.name + progressStr,
                 key: stop.id,
                 badge: `Vol: ${organStore.stopVolumes[stop.id]}`,
                 badgeColor: 'green-9',
                 detail: `Gain: ${stop.gain || 0}`,
                 children: rankNodes,
-                icon: 'speaker',
+                icon: isSelected && loaded < expected ? 'sync' : 'speaker',
             };
         });
 
@@ -112,6 +168,20 @@ const treeNodes = computed(() => {
                         { label: `Global Gain: ${data.globalGain || 0}`, key: 'global-gain', icon: 'volume_up' },
                         { label: `Base Path: ${data.basePath}`, key: 'base-path', icon: 'folder' },
                     ],
+                },
+                {
+                    label: 'Synth Performance',
+                    key: 'synth-stats',
+                    icon: 'speed',
+                    labelClass: 'text-cyan-4 text-weight-bold',
+                    children: [
+                        { label: `Active Stops: ${synthStats.value.activeStops}`, key: 'stat-stops', icon: 'adjust' },
+                        { label: `Partial Buffers: ${synthStats.value.partialSamples}`, key: 'stat-partial', icon: 'content_cut' },
+                        { label: `Full Buffers: ${synthStats.value.fullSamples}`, key: 'stat-full', icon: 'all_inclusive' },
+                        { label: `RAM Estimate: ${formatBytes(synthStats.value.totalRamEstimateBytes)}`, key: 'stat-ram', icon: 'memory', labelClass: 'text-amber-5' },
+                        { label: `Active Voices: ${synthStats.value.activeVoices}`, key: 'stat-voices', icon: 'people' },
+                        { label: `Background Tasks: ${synthStats.value.loadingTasks}`, key: 'stat-tasks', icon: 'downloading' },
+                    ]
                 },
                 ...manualNodes,
             ],

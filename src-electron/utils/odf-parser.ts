@@ -10,6 +10,7 @@ export interface OrganPipe {
   releasePath?: string | undefined;
   midiNote: number;
   gain: number; // in dB
+  pan?: number; // -100 to 100 or specific pan units
   tuning: number; // in cents
   harmonicNumber: number;
 }

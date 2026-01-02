@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('myApi', {
     readFileAsArrayBuffer: (path: string) => ipcRenderer.invoke('read-file-arraybuffer', path),
     selectFolder: () => ipcRenderer.invoke('select-folder'),
     getWavInfo: (path: string) => ipcRenderer.invoke('get-wav-info', path),
+    getWavSamples: (path: string, maxSamples?: number) => ipcRenderer.invoke('get-wav-samples', path, maxSamples),
     getRecentFiles: () => ipcRenderer.invoke('get-recent-files'),
     onRenderProgress: (callback: (event: any, progress: number) => void) => ipcRenderer.on('render-progress', callback),
     onExtractionProgress: (callback: (event: any, data: { progress: number, file: string }) => void) => ipcRenderer.on('extraction-progress', callback),

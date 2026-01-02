@@ -15,6 +15,7 @@ export interface Voice {
     basePlaybackRate?: number;
     pitchOffsetCents: number; // For virtual stop shift
     renderingNote: number;    // For virtual stop transposition
+    startTime: number;        // To sync partial -> full swap
 }
 
 export interface WavMetadata {
@@ -25,13 +26,25 @@ export interface WavMetadata {
     loops: Array<{ start: number, end: number }>;
 }
 
+export interface SampleBuffer {
+    partial: AudioBuffer | null;
+    full: AudioBuffer | null;
+    status: 'none' | 'partial' | 'full' | 'loading';
+}
+
 export class SynthEngine {
     private context: AudioContext;
-    private buffers: Record<string, AudioBuffer> = {};
+    private buffers: Record<string, SampleBuffer> = {};
     private metadata: Record<string, WavMetadata> = {};
     private loadingTasks: Record<string, Promise<void>> = {};
+    private unloadTimeouts: Record<string, NodeJS.Timeout> = {};
+    private selectedStops: Set<string> = new Set();
     private activeVoices: Voice[] = [];
     private requestedNotes: Set<string> = new Set(); // Tracks held keys (note-stopId key)
+    private lastActiveTremulants: any[] = [];
+    private requestQueue: (() => void)[] = [];
+    private activeRequests = 0;
+    private maxConcurrency = 20;
     private masterGain: GainNode;
     public analyser: AnalyserNode;
     private isTsunamiMode = false;
@@ -54,7 +67,7 @@ export class SynthEngine {
     }
 
     private updateMasterGain() {
-        const linear = Math.pow(10, this.globalGainDb / 20) * 0.5;
+        const linear = Math.pow(10, this.globalGainDb / 20);
         this.masterGain.gain.setTargetAtTime(linear, this.context.currentTime, 0.05);
     }
 
@@ -72,29 +85,84 @@ export class SynthEngine {
         this.useReleaseSamples = enabled;
     }
 
-    async loadSample(stopId: string, pipePath: string): Promise<void> {
+    markStopSelected(stopId: string) {
+        this.selectedStops.add(stopId);
+    }
+
+    async loadSample(stopId: string, pipePath: string, type: 'partial' | 'full' = 'partial'): Promise<void> {
         if (!pipePath) return;
         const key = `${stopId}-${pipePath}`;
-        if (this.buffers[key]) return;
-        if (this.loadingTasks[key]) return this.loadingTasks[key];
 
-        this.loadingTasks[key] = (async () => {
+        if (!this.buffers[key]) {
+            this.buffers[key] = { partial: null, full: null, status: 'none' };
+        }
+
+        const sample = this.buffers[key];
+        if (type === 'full' && sample.status === 'full') return;
+        if (type === 'partial' && (sample.status === 'partial' || sample.status === 'full')) return;
+
+        if (this.loadingTasks[key + '-' + type]) return this.loadingTasks[key + '-' + type];
+
+        this.loadingTasks[key + '-' + type] = (async () => {
+            // Wait for a slot in the global concurrency queue
+            if (this.activeRequests >= this.maxConcurrency) {
+                await new Promise<void>(resolve => {
+                    if (type === 'partial') {
+                        // High priority: Jump to front of the queue
+                        this.requestQueue.unshift(resolve);
+                    } else {
+                        // Background: Standard queueing
+                        this.requestQueue.push(resolve);
+                    }
+                });
+            }
+            this.activeRequests++;
+
             try {
-                const meta = await (window as any).myApi.getWavInfo(pipePath);
-                if (meta) {
-                    this.metadata[key] = meta;
+                // Cancel pending unload for this sample if we are loading it
+                if (this.unloadTimeouts[key]) {
+                    clearTimeout(this.unloadTimeouts[key]);
+                    delete this.unloadTimeouts[key];
                 }
-                const arrayBuffer = await (window as any).myApi.readFileAsArrayBuffer(pipePath);
+
+                if (!this.metadata[key]) {
+                    const meta = await (window as any).myApi.getWavInfo(pipePath);
+                    if (meta) {
+                        this.metadata[key] = meta;
+                    }
+                }
+
+                // Use high-performance custom protocol for binary data
+                // We use a query parameter for the path because absolute paths with drive letters/slashes 
+                // often get misinterpreted by the URL parser as host/authority.
+                const url = `organ-sample://host?path=${encodeURIComponent(pipePath)}&type=${type}`;
+                const response = await fetch(url);
+                const arrayBuffer = await response.arrayBuffer();
                 const audioBuffer = await this.context.decodeAudioData(arrayBuffer);
-                this.buffers[key] = audioBuffer;
+
+                if (type === 'partial') {
+                    sample.partial = audioBuffer;
+                    if (sample.status === 'none') {
+                        sample.status = 'partial';
+                    }
+                } else {
+                    sample.full = audioBuffer;
+                    sample.status = 'full';
+                }
             } catch (e) {
-                console.error(`Failed to load sample for synth: ${pipePath}`, e);
+                console.error(`Failed to load sample for synth: ${pipePath} (${type})`, e);
             } finally {
-                delete this.loadingTasks[key];
+                delete this.loadingTasks[key + '-' + type];
+                // Release slot and trigger next in queue
+                this.activeRequests--;
+                if (this.requestQueue.length > 0) {
+                    const next = this.requestQueue.shift();
+                    if (next) next();
+                }
             }
         })();
 
-        return this.loadingTasks[key];
+        return this.loadingTasks[key + '-' + type];
     }
 
     async noteOn(
@@ -120,13 +188,33 @@ export class SynthEngine {
         const requestKey = `${note}-${stopId}`;
         const bufferKey = `${stopId}-${pipePath}`;
 
+        // Cancel any pending unload timer for this specific buffer
+        if (this.unloadTimeouts[bufferKey]) {
+            clearTimeout(this.unloadTimeouts[bufferKey]);
+            delete this.unloadTimeouts[bufferKey];
+        }
+        if (releasePath) {
+            const relKey = `${stopId}-${releasePath}`;
+            if (this.unloadTimeouts[relKey]) {
+                clearTimeout(this.unloadTimeouts[relKey]);
+                delete this.unloadTimeouts[relKey];
+            }
+        }
+
         this.requestedNotes.add(requestKey);
 
-        if (!this.buffers[bufferKey]) {
-            if (this.loadingTasks[bufferKey]) {
-                await this.loadingTasks[bufferKey];
-            } else {
-                await this.loadSample(stopId, pipePath);
+        const sample = this.buffers[bufferKey];
+        if (!sample || sample.status === 'none') {
+            await this.loadSample(stopId, pipePath, 'partial');
+        }
+
+        // Trigger full load in background if not already present/loading
+        const currentSample = this.buffers[bufferKey];
+        if (currentSample && currentSample.status !== 'full') {
+            this.loadSample(stopId, pipePath, 'full');
+            // Also trigger full load for release if it exists
+            if (releasePath) {
+                this.loadSample(stopId, releasePath, 'full');
             }
         }
 
@@ -134,7 +222,7 @@ export class SynthEngine {
             return;
         }
 
-        const buffer = this.buffers[bufferKey];
+        const buffer = currentSample?.full || currentSample?.partial;
         const meta = this.metadata[bufferKey];
 
         if (!buffer) return;
@@ -147,8 +235,13 @@ export class SynthEngine {
             if (loop) {
                 const sr = buffer.sampleRate || 44100;
                 source.loop = true;
-                source.loopStart = (loop.start || 0) / sr;
-                source.loopEnd = (loop.end || buffer.length - 1) / sr;
+                // Clamp loop points to duration to prevent silence on partial buffers
+                source.loopStart = Math.min((loop.start || 0) / sr, buffer.duration - 0.001);
+                source.loopEnd = Math.min((loop.end || buffer.length - 1) / sr, buffer.duration);
+                // Ensure loopStart is before loopEnd
+                if (source.loopStart >= source.loopEnd) {
+                    source.loopStart = 0;
+                }
             }
         }
 
@@ -204,12 +297,94 @@ export class SynthEngine {
             manualId,
             basePlaybackRate: source.playbackRate.value,
             pitchOffsetCents,
-            renderingNote: renderingNote ?? note
+            renderingNote: renderingNote ?? note,
+            startTime: this.context.currentTime
         };
         this.activeVoices.push(voice);
 
+        // If we started with partial, trigger full load and swap when ready
+        if (currentSample && currentSample.status !== 'full') {
+            this.loadSample(stopId, pipePath, 'full').then(() => {
+                this.swapVoiceToFull(voice);
+            });
+            if (releasePath) {
+                this.loadSample(stopId, releasePath, 'full');
+            }
+        }
+
         // Apply Tremulants
         this.applyTremulantsToVoice(voice, activeTremulants);
+    }
+
+    private swapVoiceToFull(voice: Voice) {
+        // Check if voice is still active and needs swapping
+        if (!this.activeVoices.includes(voice)) return;
+        const bufferKey = `${voice.stopId}-${voice.pipePath}`;
+        const sample = this.buffers[bufferKey];
+        if (!sample || !sample.full || voice.source.buffer === sample.full) return;
+
+        console.log(`[Synth] Swapping voice ${voice.note} on stop ${voice.stopId} to full buffer...`);
+
+        const now = this.context.currentTime;
+        const crossfadeTime = 0.1;
+        const playbackRate = voice.source.playbackRate.value;
+        const elapsed = (now - voice.startTime);
+
+        // Calculate offset (rough phase alignment)
+        const offset = (elapsed * playbackRate) % voice.source.buffer!.duration;
+
+        const newSource = this.context.createBufferSource();
+        newSource.buffer = sample.full;
+        newSource.playbackRate.value = playbackRate;
+        newSource.loop = voice.source.loop;
+
+        const meta = this.metadata[bufferKey];
+        if (meta && meta.loops && meta.loops.length > 0) {
+            const loop = meta.loops[0];
+            const sr = sample.full.sampleRate;
+            newSource.loopStart = (loop.start || 0) / sr;
+            newSource.loopEnd = (loop.end || sample.full.length - 1) / sr;
+        }
+
+        const newGainNode = this.context.createGain();
+        // Match current volume
+        const currentTargetGain = (voice.volume / 100) * Math.pow(10, (voice.gainDb || 0) / 20);
+        let pedalScale = 1.0;
+        if (voice.isPedal) {
+            pedalScale = Math.max(0, 1.0 - (voice.note - 36) * (1.0 / 24));
+        }
+        const finalVolume = currentTargetGain * pedalScale;
+
+        newGainNode.gain.setValueAtTime(0, now);
+        newGainNode.gain.linearRampToValueAtTime(finalVolume, now + crossfadeTime);
+
+        newSource.connect(newGainNode);
+        newGainNode.connect(this.masterGain);
+
+        newSource.start(now, offset);
+
+        // Fade out old one
+        voice.gain.gain.cancelScheduledValues(now);
+        voice.gain.gain.setValueAtTime(voice.gain.gain.value, now);
+        voice.gain.gain.linearRampToValueAtTime(0, now + crossfadeTime);
+
+        const oldSource = voice.source;
+        const oldGain = voice.gain;
+
+        // Update voice object
+        voice.source = newSource;
+        voice.gain = newGainNode;
+
+        // Re-apply tremulants to the new source
+        this.updateTremulants(this.lastActiveTremulants);
+
+        setTimeout(() => {
+            try {
+                oldSource.stop();
+                oldSource.disconnect();
+                oldGain.disconnect();
+            } catch (e) { /* ignore */ }
+        }, (crossfadeTime + 0.1) * 1000);
     }
 
     private applyTremulantsToVoice(voice: Voice, activeTremulants: any[]) {
@@ -258,6 +433,7 @@ export class SynthEngine {
     }
 
     updateTremulants(allActiveTremulants: any[]) {
+        this.lastActiveTremulants = allActiveTremulants;
         this.activeVoices.forEach(voice => {
             // 1. Stop and disconnect existing LFOs
             if ((voice.source as any).lfos) {
@@ -292,7 +468,55 @@ export class SynthEngine {
             } else {
                 this.fadeVoice(v, 0.2);
             }
+
+            // Start hysteresis timer for the buffers
+            const bufferKey = `${v.stopId}-${v.pipePath}`;
+            if (this.unloadTimeouts[bufferKey]) {
+                clearTimeout(this.unloadTimeouts[bufferKey]);
+            }
+            this.unloadTimeouts[bufferKey] = setTimeout(() => {
+                this.tryUnloadFullBuffer(v.stopId, v.pipePath);
+                delete this.unloadTimeouts[bufferKey];
+            }, 5000);
+
+            if (v.releasePath) {
+                const relKey = `${v.stopId}-${v.releasePath}`;
+                if (this.unloadTimeouts[relKey]) clearTimeout(this.unloadTimeouts[relKey]);
+                this.unloadTimeouts[relKey] = setTimeout(() => {
+                    this.tryUnloadFullBuffer(v.stopId, v.releasePath!);
+                    delete this.unloadTimeouts[relKey];
+                }, 5000);
+            }
         });
+    }
+
+    private tryUnloadFullBuffer(stopId: string, pipePath: string) {
+        const key = `${stopId}-${pipePath}`;
+        const sample = this.buffers[key];
+        if (!sample || sample.status !== 'full') return;
+
+        // Don't unload if stop is not selected? 
+        // Actually, if note is not playing, we can revert to partial if stop IS selected.
+        // If stop is NOT selected, we should have already unloaded everything.
+
+        // Check if any active voice is still using this buffer
+        const isStillInUse = this.activeVoices.some(v =>
+            (v.stopId === stopId && v.pipePath === pipePath) ||
+            (v.stopId === stopId && v.releasePath === pipePath)
+        );
+
+        if (!isStillInUse) {
+            const oldStatus = sample.status;
+            sample.full = null;
+            if (sample.partial) {
+                sample.status = 'partial';
+            } else {
+                sample.status = 'none';
+            }
+            console.log(`[Synth] Unloaded full buffer for ${key} (previous status: ${oldStatus}), reverted to ${sample.status}`);
+        } else {
+            console.log(`[Synth] Skipping unload for ${key} - still in use by active voices.`);
+        }
     }
 
     private triggerRelease(voice: Voice) {
@@ -313,7 +537,8 @@ export class SynthEngine {
 
         if (relPath) {
             const relKey = `${voice.stopId}-${relPath}`;
-            const relBuffer = this.buffers[relKey];
+            const relSample = this.buffers[relKey];
+            const relBuffer = relSample?.full || relSample?.partial;
 
             if (relBuffer) {
                 const relSource = this.context.createBufferSource();
@@ -392,6 +617,31 @@ export class SynthEngine {
         }
     }
 
+    markStopDeselected(stopId: string) {
+        this.selectedStops.delete(stopId);
+        this.unloadStop(stopId);
+    }
+
+    private unloadStop(stopId: string) {
+        Object.keys(this.buffers).forEach(key => {
+            if (key.startsWith(`${stopId}-`)) {
+                if (this.unloadTimeouts[key]) {
+                    clearTimeout(this.unloadTimeouts[key]);
+                    delete this.unloadTimeouts[key];
+                }
+                const sample = this.buffers[key];
+                if (sample) {
+                    sample.full = null;
+                    sample.partial = null;
+                    sample.status = 'none';
+                }
+                delete this.buffers[key];
+                delete this.metadata[key];
+            }
+        });
+        console.log(`[Synth] Unloaded all samples for stop: ${stopId}`);
+    }
+
     clearAll() {
         this.activeVoices.forEach(v => this.stopVoice(v));
         this.activeVoices = [];
@@ -404,6 +654,9 @@ export class SynthEngine {
         this.buffers = {};
         this.metadata = {};
         this.loadingTasks = {};
+        this.selectedStops.clear();
+        Object.values(this.unloadTimeouts).forEach(t => clearTimeout(t));
+        this.unloadTimeouts = {};
         console.log('[Synth] All samples unloaded from memory.');
     }
 
@@ -413,6 +666,34 @@ export class SynthEngine {
         if (this.context.state !== 'closed') {
             this.context.close();
         }
+    }
+
+    getStats() {
+        const stats = {
+            activeStops: this.selectedStops.size,
+            partialSamples: 0,
+            fullSamples: 0,
+            totalRamEstimateBytes: 0,
+            activeVoices: this.activeVoices.length,
+            loadingTasks: Object.keys(this.loadingTasks).length
+        };
+
+        Object.values(this.buffers).forEach(sample => {
+            if (sample.partial) {
+                stats.partialSamples++;
+                stats.totalRamEstimateBytes += sample.partial.length * sample.partial.numberOfChannels * 4;
+            }
+            if (sample.full) {
+                stats.fullSamples++;
+                stats.totalRamEstimateBytes += sample.full.length * sample.full.numberOfChannels * 4;
+            }
+        });
+
+        return stats;
+    }
+
+    getStopBufferCount(stopId: string) {
+        return Object.keys(this.buffers).filter(k => k.startsWith(`${stopId}-`)).length;
     }
 }
 
