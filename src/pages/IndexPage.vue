@@ -2,6 +2,27 @@
   <q-page class="organ-page text-white column no-wrap">
     <!-- Welcome Screen -->
     <div v-if="!organStore.organData" class="welcome-container full-height flex column flex-center">
+      <!-- Extraction Progress Overlay (Moved inside to fix v-else chain) -->
+      <q-dialog v-model="organStore.isExtracting" persistent transition-show="scale" transition-hide="scale">
+        <q-card dark style="width: 500px; background: rgba(20, 20, 20, 0.95); border: 1px solid #d4af37;"
+          class="q-pa-lg shadow-24">
+          <q-card-section class="column items-center">
+            <q-icon name="unarchive" size="64px" color="amber-7" class="q-mb-md" />
+            <div class="text-h5 font-cinzel text-amber-8 q-mb-sm">Extracting Organ</div>
+            <div class="text-caption text-grey-5 text-center q-mb-lg">This may take a few minutes for large archives...
+            </div>
+
+            <q-linear-progress :value="organStore.extractionProgress" color="amber-7" size="12px" rounded
+              class="q-mb-sm" />
+            <div class="row full-width justify-between items-center q-mb-md">
+              <div class="text-h6 text-amber-1">{{ Math.round(organStore.extractionProgress * 100) }}%</div>
+              <div class="text-caption text-grey-6 ellipsis" style="max-width: 300px;">{{ organStore.extractionFile }}
+              </div>
+            </div>
+          </q-card-section>
+        </q-card>
+      </q-dialog>
+
       <div class="welcome-card q-pa-xl text-center shadow-24">
         <q-icon name="piano" size="64px" class="text-amber-8 q-mb-md" />
         <div class="text-h3 font-cinzel text-amber-9 q-mb-sm">The Choir Organ</div>
@@ -9,8 +30,8 @@
           Advanced GrandOrgue & Tsunami Toolset
         </div>
 
-        <q-btn id="btn-open-odf" color="amber-9" size="lg" label="Open ODF File" @click="() => organStore.loadOrgan()" icon="folder_open"
-          class="font-cinzel q-px-xl q-py-sm" outline />
+        <q-btn id="btn-open-odf" color="amber-9" size="lg" label="Open Organ" @click="() => organStore.loadOrgan()"
+          icon="folder_open" class="font-cinzel q-px-xl q-py-sm" outline />
 
         <div v-if="organStore.recentFiles.length > 0" class="recent-list q-mt-xl text-left">
           <div class="text-overline text-grey-6 q-mb-sm text-center">Recently Opened</div>
@@ -34,6 +55,7 @@
         </div>
       </div>
     </div>
+
 
     <!-- Organ Console -->
     <div v-else class="organ-console column" style="flex: 1 1 auto">
@@ -258,7 +280,8 @@
 
               <!-- 2. Burn Button -->
               <div class="row q-gutter-x-sm q-gutter-y-sm">
-                <q-btn id="btn-burn-card" color="red-10" :label="organStore.isOutputRemovable ? 'Burn to Card' : 'Copy to Folder'"
+                <q-btn id="btn-burn-card" color="red-10"
+                  :label="organStore.isOutputRemovable ? 'Burn to Card' : 'Copy to Folder'"
                   class="col font-cinzel q-py-sm shadow-10" :loading="organStore.isRendering"
                   :disable="organStore.banks.length === 0" @click="handleRenderClick"
                   :icon-right="organStore.isOutputRemovable ? 'sd_card' : 'folder'">
@@ -284,7 +307,8 @@
                 <div class="text-caption text-white semi-bold">{{ organStore.isOutputRemovable ? 'Drive Ready' :
                   'Folder Ready' }}
                 </div>
-                <q-btn id="btn-preview-ready" flat dense color="white" label="Preview" size="sm" class="text-weight-bold"
+                <q-btn id="btn-preview-ready" flat dense color="white" label="Preview" size="sm"
+                  class="text-weight-bold"
                   @click="$router.push({ path: '/preview', query: { folder: organStore.outputDir } })" />
               </div>
             </div>

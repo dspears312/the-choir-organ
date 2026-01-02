@@ -10,6 +10,8 @@ contextBridge.exposeInMainWorld('myApi', {
     getWavInfo: (path: string) => ipcRenderer.invoke('get-wav-info', path),
     getRecentFiles: () => ipcRenderer.invoke('get-recent-files'),
     onRenderProgress: (callback: (event: any, progress: number) => void) => ipcRenderer.on('render-progress', callback),
+    onExtractionProgress: (callback: (event: any, data: { progress: number, file: string }) => void) => ipcRenderer.on('extraction-progress', callback),
+    onExtractionStart: (callback: (event: any) => void) => ipcRenderer.on('extraction-start', callback),
     listDir: (path: string) => ipcRenderer.invoke('list-dir', path),
     saveOrganState: (odfPath: string, state: any) => ipcRenderer.invoke('save-organ-state', { odfPath, state }),
     loadOrganState: (odfPath: string) => ipcRenderer.invoke('load-organ-state', odfPath),

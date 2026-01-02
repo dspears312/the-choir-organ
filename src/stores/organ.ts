@@ -43,7 +43,10 @@ export const useOrganStore = defineStore('organ', {
         suppressDiskWarning: false,
         isOutputRemovable: false,
         availableDrives: [] as any[],
-        drivePollInterval: null as any
+        drivePollInterval: null as any,
+        isExtracting: false,
+        extractionProgress: 0,
+        extractionFile: ''
     }),
     getters: {
         targetVolumeLabel: (state) => {
@@ -64,7 +67,26 @@ export const useOrganStore = defineStore('organ', {
             if (path && typeof path === 'string') {
                 data = await (window as any).myApi.selectOdfFile(path);
             } else {
-                data = await (window as any).myApi.selectOdfFile();
+                this.isExtracting = false;
+                this.extractionProgress = 0;
+                this.extractionFile = '';
+
+                const startListener = () => {
+                    this.isExtracting = true;
+                };
+                const progressListener = (_event: any, data: any) => {
+                    this.extractionProgress = data.progress / 100;
+                    this.extractionFile = data.file;
+                };
+
+                (window as any).myApi.onExtractionStart(startListener);
+                (window as any).myApi.onExtractionProgress(progressListener);
+
+                try {
+                    data = await (window as any).myApi.selectOdfFile();
+                } finally {
+                    this.isExtracting = false;
+                }
             }
 
             if (data && !data.error) {

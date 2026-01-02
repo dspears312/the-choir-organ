@@ -35,13 +35,17 @@ export function parseHauptwerk(filePath: string): OrganData {
 
     console.log(`[HauptwerkParser] Organ Name: ${organName}`);
 
-    // Resolve the OrganInstallationPackages directory
-    const packagesDir = findPackagesDir(basePath);
-    console.log(`[HauptwerkParser] Packages directory candidate: ${packagesDir || 'NOT FOUND'}`);
+    // Resolve the OrganInstallationPackages directories (multiple for distributed organs)
+    const packageDirs = findRelevantPackagesDirs(basePath);
+    console.log(`[HauptwerkParser] Found ${packageDirs.length} package directories.`);
 
-    // Index all available .wav/.wv files in the installation packages
-    const sampleIndex = packagesDir ? scanInstallationPackages(packagesDir) : new Map<string, string>();
-    console.log(`[HauptwerkParser] Indexed ${sampleIndex.size} sample files.`);
+    // Index all available .wav/.wv files in all identified installation packages
+    const sampleIndex = new Map<string, string>();
+    packageDirs.forEach(dir => {
+        const index = scanInstallationPackages(dir);
+        index.forEach((p, k) => sampleIndex.set(k, p));
+    });
+    console.log(`[HauptwerkParser] Indexed ${sampleIndex.size} sample files total.`);
 
     const organData: OrganData = {
         name: organName,
@@ -263,22 +267,53 @@ export function parseHauptwerk(filePath: string): OrganData {
 }
 
 /**
- * Searches upwards from ODF directory to find the 'OrganInstallationPackages' folder.
+ * Searches upward to find the 'OrganInstallationPackages' folder,
+ * and if it's within the 'extracted_organs' root, scans all sibling extractions too.
  */
-function findPackagesDir(startDir: string): string | null {
+function findRelevantPackagesDirs(startDir: string): string[] {
+    const results: string[] = [];
     let current = path.resolve(startDir);
+    let primaryPkgDir: string | null = null;
+    let extractionRoot: string | null = null;
+
+    // 1. Find the primary package dir for THIS extraction
     for (let i = 0; i < 6; i++) {
         const check = path.join(current, 'OrganInstallationPackages');
-        if (fs.existsSync(check)) {
-            const stat = fs.statSync(check);
-            if (stat.isDirectory()) return check;
+        if (fs.existsSync(check) && fs.statSync(check).isDirectory()) {
+            primaryPkgDir = check;
+            // The shell of the extraction is current
+            // If its parent is 'extracted_organs', we can find siblings
+            const parent = path.dirname(current);
+            if (path.basename(parent) === 'extracted_organs' || path.basename(parent) === 'userData') {
+                extractionRoot = parent;
+            }
+            break;
         }
-        // Also check one level deeper in siblings as Hauptwerk often has a nested structure
-        const parent = path.dirname(current);
-        if (parent === current) break;
-        current = parent;
+        const next = path.dirname(current);
+        if (next === current) break;
+        current = next;
     }
-    return null;
+
+    if (primaryPkgDir) results.push(primaryPkgDir);
+
+    // 2. Discover sibling packages if we found the root
+    if (extractionRoot) {
+        try {
+            const siblings = fs.readdirSync(extractionRoot, { withFileTypes: true });
+            for (const sibling of siblings) {
+                if (sibling.isDirectory()) {
+                    const siblingPkgDir = path.join(extractionRoot, sibling.name, 'OrganInstallationPackages');
+                    if (fs.existsSync(siblingPkgDir) && siblingPkgDir !== primaryPkgDir) {
+                        results.push(siblingPkgDir);
+                    }
+                }
+            }
+        } catch (e) {
+            console.error('[HauptwerkParser] Error scanning sibling packages:', e);
+        }
+    }
+
+    return results;
 }
 
 /**

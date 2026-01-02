@@ -10,6 +10,7 @@ import { parseHauptwerk } from './utils/hauptwerk-parser';
 import { renderNote } from './utils/renderer';
 import { readWav } from './utils/wav-reader';
 import { addToRecent, getRecents, saveOrganState, loadOrganState } from './utils/persistence';
+import { handleRarExtraction } from './utils/archive-handler';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const { autoUpdater } = require('electron-updater');
@@ -221,22 +222,38 @@ async function createWindow() {
 // IPC Handlers
 ipcMain.handle('select-odf-file', async (event, specificPath?: string) => {
   let filePath = specificPath;
+  let allSelectedPaths: string[] = [];
 
   if (!filePath) {
     const result = await dialog.showOpenDialog({
-      properties: ['openFile'],
+      properties: ['openFile', 'multiSelections'],
       filters: [
-        { name: 'Organ Definition Files', extensions: ['organ', 'xml', 'Organ_Hauptwerk_xml'] },
+        { name: 'Organ Files', extensions: ['organ', 'xml', 'Organ_Hauptwerk_xml', 'rar'] },
         { name: 'GrandOrgue ODF', extensions: ['organ'] },
-        { name: 'Hauptwerk XML', extensions: ['xml', 'Organ_Hauptwerk_xml'] }
+        { name: 'Hauptwerk XML', extensions: ['xml', 'Organ_Hauptwerk_xml'] },
+        { name: 'RAR Archives', extensions: ['rar'] }
       ]
     });
+    if (result.filePaths.length === 0) return null;
     filePath = result.filePaths[0];
+    allSelectedPaths = result.filePaths;
+  } else {
+    allSelectedPaths = [filePath];
   }
 
   if (!filePath) return null;
 
   try {
+    // If it's a RAR archive (or multiple), handle extraction
+    if (allSelectedPaths.some(p => p.toLowerCase().endsWith('.rar'))) {
+      const extractedOdf = await handleRarExtraction(allSelectedPaths, mainWindow!);
+      if (extractedOdf) {
+        filePath = extractedOdf;
+      } else {
+        return { error: 'No organ definition files found in the archive(s).' };
+      }
+    }
+
     addToRecent(filePath);
     if (filePath.toLowerCase().endsWith('.xml') || filePath.toLowerCase().includes('_hauptwerk_xml')) {
       return parseHauptwerk(filePath);
