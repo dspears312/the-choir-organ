@@ -44,6 +44,8 @@
 
                     <q-separator vertical color="grey-9" />
 
+
+
                     <q-btn flat icon="file_open" round @click="organStore.importFromJSON"><q-tooltip>Open Combination
                             File</q-tooltip></q-btn>
                     <q-btn id="btn-save-json" rounded label="Save" color="green" icon="save"
@@ -56,11 +58,11 @@
 
                 <!-- Left Area: Tabs for Basic or Organ Screens -->
                 <div class="col column no-wrap">
-                    <q-tabs v-model="activeTab" dense class="bg-grey-10 text-amber" active-color="amber"
-                        indicator-color="amber" align="left" narrow-indicator>
+                    <q-tabs v-model="activeTab" dense class="bg-grey-10 text-amber" active-color="amber" align="center"
+                        indicator-color="amber" narrow-indicator>
                         <q-tab name="basic" label="Basic" class="font-cinzel" />
-                        <q-tab v-for="screen in organStore.organData?.screens" :key="screen.id" :name="screen.id"
-                            :label="screen.name" class="font-cinzel" />
+                        <q-tab v-for="screen in filteredScreens" :key="screen.id" :name="screen.id" :label="screen.name"
+                            class="font-cinzel" />
                     </q-tabs>
 
                     <q-tab-panels v-model="activeTab" animated class="col bg-transparent overflow-hidden"
@@ -129,12 +131,12 @@
 
                         <!-- Organ Screen Views -->
                         <q-tab-panel v-for="screen in organStore.organData?.screens" :key="screen.id" :name="screen.id"
-                            class="q-pa-none overflow-hidden">
-                            <q-scroll-area style="height: 100%; width: 100%;">
-                                <div class="flex flex-center q-pa-lg" style="min-height: 100%">
-                                    <OrganScreen :screen="screen" :style="getScreenScalingStyle(screen)" />
-                                </div>
-                            </q-scroll-area>
+                            class="q-pa-sm overflow-hidden" style="display: flex;">
+                            <!-- <q-scroll-area style="height: 100%; width: 100%;"> -->
+                            <!-- <div class="flex flex-center q-pa-md" style="min-height: 100%"> -->
+                            <OrganScreen :screen="screen" />
+                            <!-- </div> -->
+                            <!-- </q-scroll-area> -->
                         </q-tab-panel>
                     </q-tab-panels>
                 </div>
@@ -454,6 +456,19 @@ const activeTab = ref('basic');
 const showDiskWarning = ref(false);
 const showFormatDialog = ref(false);
 const showAdvancedDisk = ref(false);
+
+const filteredScreens = computed(() => {
+    return organStore.organData?.screens.filter(screen => {
+        let title = screen.name.toLowerCase();
+        if (title.includes('noise')) return false;
+        if (title.includes('wind')) return false;
+        if (title.includes('blow')) return false;
+        if (title.includes('cresc')) return false;
+        if (title.includes('detun')) return false; // detune or detuning
+        if (title.includes('voic')) return false; // voice or voicing
+        return true;
+    });
+});
 
 // RAM Monitoring
 const ramUsage = ref(0);
