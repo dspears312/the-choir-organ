@@ -324,13 +324,13 @@ export function parseODF(filePath: string): OrganData {
           screen.elements.push({
             id: `${panelId}_sw_${switchId}`,
             type: 'Switch',
-            name: globalSwitch.Name || `Switch ${switchId}`,
-            x: parseInt(globalSwitch.PositionX || '0'),
-            y: parseInt(globalSwitch.PositionY || '0'),
-            width: parseInt(globalSwitch.MouseRectWidth || '50'),
-            height: parseInt(globalSwitch.MouseRectHeight || '50'),
-            imageOn: globalSwitch.ImageOn ? path.resolve(basePath, globalSwitch.ImageOn.replace(/\\/g, '/')) : undefined,
-            imageOff: globalSwitch.ImageOff ? path.resolve(basePath, globalSwitch.ImageOff.replace(/\\/g, '/')) : undefined,
+            name: psData.Name || globalSwitch.Name || `Switch ${switchId}`,
+            x: parseInt(psData.PositionX || globalSwitch.PositionX || '0'),
+            y: parseInt(psData.PositionY || globalSwitch.PositionY || '0'),
+            width: parseInt(psData.MouseRectWidth || globalSwitch.MouseRectWidth || '50'),
+            height: parseInt(psData.MouseRectHeight || globalSwitch.MouseRectHeight || '50'),
+            imageOn: (psData.ImageOn || globalSwitch.ImageOn) ? path.resolve(basePath, (psData.ImageOn || globalSwitch.ImageOn).replace(/\\/g, '/')) : undefined,
+            imageOff: (psData.ImageOff || globalSwitch.ImageOff) ? path.resolve(basePath, (psData.ImageOff || globalSwitch.ImageOff).replace(/\\/g, '/')) : undefined,
             linkId: switchIdToStopId[switchId] || switchId // Use StopID if available, else SwitchID
           });
         }
