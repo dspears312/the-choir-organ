@@ -34,3 +34,4 @@ yarn-error.log*
 
 # Temporary organ definition files for agentic parsing
 *.organ
+*.Organ_Hauptwerk_xml
