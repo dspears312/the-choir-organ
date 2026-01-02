@@ -153,13 +153,13 @@ export const useOrganStore = defineStore('organ', {
         toggleStop(stopId: string) {
             const index = this.currentCombination.indexOf(stopId);
             if (index === -1) {
-                this.currentCombination.push(stopId);
+                this.currentCombination = [...this.currentCombination, stopId];
                 synth.markStopSelected(stopId);
                 this.activeMidiNotes.forEach(note => {
                     this.playPipe(note, stopId);
                 });
             } else {
-                this.currentCombination.splice(index, 1);
+                this.currentCombination = this.currentCombination.filter(id => id !== stopId);
                 synth.markStopDeselected(stopId);
                 this.activeMidiNotes.forEach(note => {
                     synth.noteOff(note, stopId);

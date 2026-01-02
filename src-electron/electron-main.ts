@@ -61,6 +61,16 @@ protocol.registerSchemesAsPrivileged([
       supportFetchAPI: true,
       corsEnabled: true
     }
+  },
+  {
+    scheme: 'organ-img',
+    privileges: {
+      stream: true,
+      bypassCSP: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true
+    }
   }
 ]);
 
@@ -765,6 +775,24 @@ void app.whenReady().then(() => {
       return net.fetch(pathToFileURL(filePath).toString());
     } catch (e) {
       console.error('Organ-sample protocol error:', e);
+      return new Response('Internal error', { status: 500 });
+    }
+  });
+
+  // Protocol for loading organ console images (BMP/PNG/JPG)
+  protocol.handle('organ-img', (request) => {
+    try {
+      const url = new URL(request.url);
+      const filePath = decodeURIComponent(url.pathname);
+
+      if (!fs.existsSync(filePath)) {
+        console.warn(`Organ image not found: ${filePath}`);
+        return new Response('File not found', { status: 404 });
+      }
+
+      return net.fetch(pathToFileURL(filePath).toString());
+    } catch (e) {
+      console.error('Organ-img protocol error:', e);
       return new Response('Internal error', { status: 500 });
     }
   });

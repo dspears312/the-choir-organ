@@ -16,7 +16,7 @@
                     <div class="ram-indicator row items-center q-gutter-x-sm" v-if="ramUsage > 0">
                         <q-icon name="memory" :style="{ color: ramColor }" size="16px" />
                         <span class="text-caption font-cinzel" :style="{ color: ramColor }">RAM: {{ formattedRam
-                            }}</span>
+                        }}</span>
                         <q-tooltip class="bg-grey-10 text-white shadow-4">
                             App Memory Usage: {{ formattedRam }}
                         </q-tooltip>
@@ -54,62 +54,90 @@
             <!-- Main Body (Flex Row taking remaining height) -->
             <div class="console-body col row no-wrap overflow-hidden">
 
-                <!-- Left: Stops Area (Scrollable) -->
+                <!-- Left Area: Tabs for Basic or Organ Screens -->
+                <div class="col column no-wrap">
+                    <q-tabs v-model="activeTab" dense class="bg-grey-10 text-amber" active-color="amber"
+                        indicator-color="amber" align="left" narrow-indicator>
+                        <q-tab name="basic" label="Basic" class="font-cinzel" />
+                        <q-tab v-for="screen in organStore.organData?.screens" :key="screen.id" :name="screen.id"
+                            :label="screen.name" class="font-cinzel" />
+                    </q-tabs>
 
-                <q-scroll-area id="stops-container" style="height: 100%" class="col q-pa-lg">
-                    <div v-for="manual in organStore.organData?.manuals" :key="manual.id" class="col-12 q-mb-md">
-                        <div class="manual-section q-pa-md">
-                            <div
-                                class="manual-name font-cinzel text-h6 text-amber-7 q-mb-lg text-center border-bottom-amber">
-                                {{ manual.name }}
-                            </div>
-                            <div class="stops-grid row justify-center q-gutter-md">
-                                <template v-for="stopId in manual.stopIds" :key="`${manual.id}-${stopId}`">
-                                    <Drawknob v-if="organStore.organData?.stops[stopId]"
-                                        :name="parseStopLabel(organStore.organData.stops[stopId].name).name"
-                                        :pitch="parseStopLabel(organStore.organData.stops[stopId].name).pitch"
-                                        :active="organStore.currentCombination.includes(stopId)"
-                                        :volume="organStore.stopVolumes[stopId] || 100"
-                                        @toggle="organStore.toggleStop(stopId)"
-                                        @update:volume="organStore.setStopVolume(stopId, $event)">
-                                        <q-menu touch-position context-menu class="bg-grey-10 text-amber">
-                                            <q-list dense style="min-width: 150px">
-                                                <q-item clickable v-close-popup @click="openCreateVirtualStop(stopId)">
-                                                    <q-item-section avatar><q-icon name="add_circle"
-                                                            color="green" /></q-item-section>
-                                                    <q-item-section>Create Virtual stop</q-item-section>
-                                                </q-item>
-                                            </q-list>
-                                        </q-menu>
-                                    </Drawknob>
+                    <q-tab-panels v-model="activeTab" animated class="col bg-transparent overflow-hidden"
+                        style="background: transparent;">
+                        <!-- Basic Grid View -->
+                        <q-tab-panel name="basic" class="q-pa-none overflow-hidden">
+                            <q-scroll-area id="stops-container" style="height: 100%" class="col q-pa-lg">
+                                <div v-for="manual in organStore.organData?.manuals" :key="manual.id"
+                                    class="col-12 q-mb-md">
+                                    <div class="manual-section q-pa-md">
+                                        <div
+                                            class="manual-name font-cinzel text-h6 text-amber-7 q-mb-lg text-center border-bottom-amber">
+                                            {{ manual.name }}
+                                        </div>
+                                        <div class="stops-grid row justify-center q-gutter-md">
+                                            <template v-for="stopId in manual.stopIds" :key="`${manual.id}-${stopId}`">
+                                                <Drawknob v-if="organStore.organData?.stops[stopId]"
+                                                    :name="parseStopLabel(organStore.organData.stops[stopId].name).name"
+                                                    :pitch="parseStopLabel(organStore.organData.stops[stopId].name).pitch"
+                                                    :active="organStore.currentCombination.includes(stopId)"
+                                                    :volume="organStore.stopVolumes[stopId] || 100"
+                                                    @toggle="organStore.toggleStop(stopId)"
+                                                    @update:volume="organStore.setStopVolume(stopId, $event)">
+                                                    <q-menu touch-position context-menu class="bg-grey-10 text-amber">
+                                                        <q-list dense style="min-width: 150px">
+                                                            <q-item clickable v-close-popup
+                                                                @click="openCreateVirtualStop(stopId)">
+                                                                <q-item-section avatar><q-icon name="add_circle"
+                                                                        color="green" /></q-item-section>
+                                                                <q-item-section>Create Virtual stop</q-item-section>
+                                                            </q-item>
+                                                        </q-list>
+                                                    </q-menu>
+                                                </Drawknob>
 
-                                    <Drawknob v-for="vs in getVirtualStopsFor(stopId)" :key="vs.id" :name="vs.name"
-                                        :pitch="vs.pitch" :active="organStore.currentCombination.includes(vs.id)"
-                                        :volume="organStore.stopVolumes[vs.id] || 100" :is-virtual="true"
-                                        @toggle="organStore.toggleStop(vs.id)"
-                                        @update:volume="organStore.setStopVolume(vs.id, $event)"
-                                        @delete="organStore.deleteVirtualStop(vs.id)">
-                                        <q-menu touch-position context-menu class="bg-grey-10 text-amber">
-                                            <q-list dense style="min-width: 150px">
-                                                <q-item clickable v-close-popup @click="openEditVirtualStop(vs)">
-                                                    <q-item-section avatar><q-icon name="edit"
-                                                            color="blue" /></q-item-section>
-                                                    <q-item-section>Edit Virtual stop</q-item-section>
-                                                </q-item>
-                                                <q-item clickable v-close-popup
-                                                    @click="organStore.deleteVirtualStop(vs.id)">
-                                                    <q-item-section avatar><q-icon name="delete"
-                                                            color="red" /></q-item-section>
-                                                    <q-item-section>Delete Virtual stop</q-item-section>
-                                                </q-item>
-                                            </q-list>
-                                        </q-menu>
-                                    </Drawknob>
-                                </template>
-                            </div>
-                        </div>
-                    </div>
-                </q-scroll-area>
+                                                <Drawknob v-for="vs in getVirtualStopsFor(stopId)" :key="vs.id"
+                                                    :name="vs.name" :pitch="vs.pitch"
+                                                    :active="organStore.currentCombination.includes(vs.id)"
+                                                    :volume="organStore.stopVolumes[vs.id] || 100" :is-virtual="true"
+                                                    @toggle="organStore.toggleStop(vs.id)"
+                                                    @update:volume="organStore.setStopVolume(vs.id, $event)"
+                                                    @delete="organStore.deleteVirtualStop(vs.id)">
+                                                    <q-menu touch-position context-menu class="bg-grey-10 text-amber">
+                                                        <q-list dense style="min-width: 150px">
+                                                            <q-item clickable v-close-popup
+                                                                @click="openEditVirtualStop(vs)">
+                                                                <q-item-section avatar><q-icon name="edit"
+                                                                        color="blue" /></q-item-section>
+                                                                <q-item-section>Edit Virtual stop</q-item-section>
+                                                            </q-item>
+                                                            <q-item clickable v-close-popup
+                                                                @click="organStore.deleteVirtualStop(vs.id)">
+                                                                <q-item-section avatar><q-icon name="delete"
+                                                                        color="red" /></q-item-section>
+                                                                <q-item-section>Delete Virtual stop</q-item-section>
+                                                            </q-item>
+                                                        </q-list>
+                                                    </q-menu>
+                                                </Drawknob>
+                                            </template>
+                                        </div>
+                                    </div>
+                                </div>
+                            </q-scroll-area>
+                        </q-tab-panel>
+
+                        <!-- Organ Screen Views -->
+                        <q-tab-panel v-for="screen in organStore.organData?.screens" :key="screen.id" :name="screen.id"
+                            class="q-pa-none overflow-hidden">
+                            <q-scroll-area style="height: 100%; width: 100%;">
+                                <div class="flex flex-center q-pa-lg" style="min-height: 100%">
+                                    <OrganScreen :screen="screen" :style="getScreenScalingStyle(screen)" />
+                                </div>
+                            </q-scroll-area>
+                        </q-tab-panel>
+                    </q-tab-panels>
+                </div>
 
                 <!-- Right: Sidebar (Fixed Width, Flex Column) -->
                 <div class="col-auto bg-dark-sidebar column no-wrap border-left" style="width: 350px;">
@@ -414,12 +442,14 @@ import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useOrganStore } from 'src/stores/organ';
 import Drawknob from 'src/components/Drawknob.vue';
+import OrganScreen from 'src/components/OrganScreen.vue';
 import AudioMeter from 'src/components/AudioMeter.vue';
 import { parseStopLabel } from 'src/utils/label-parser';
 
 const organStore = useOrganStore();
 const router = useRouter();
 const selectedBank = ref(-1);
+const activeTab = ref('basic');
 
 const showDiskWarning = ref(false);
 const showFormatDialog = ref(false);
@@ -480,6 +510,14 @@ function goBack() {
     organStore.performCleanup();
     router.push('/');
     // window.location.reload();
+}
+
+function getScreenScalingStyle(screen: any) {
+    // Dynamic scaling to fit reasonable widths if needed
+    // For now we'll just center it, but could add zoom logic here
+    return {
+        // transform: 'scale(0.8)',
+    };
 }
 
 

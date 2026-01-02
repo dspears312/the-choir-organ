@@ -48,6 +48,30 @@ export interface OrganTremulant {
   manualId?: string;
 }
 
+export interface OrganScreenElement {
+  id: string;
+  type: 'Switch' | 'Label' | 'Image';
+  name: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  imageOn?: string | undefined;
+  imageOff?: string | undefined;
+  linkId?: string | undefined; // ID of the global Switch or Stop it controls
+  zIndex?: number;
+}
+
+export interface OrganScreenData {
+  id: string;
+  name: string;
+  width: number;
+  height: number;
+  backgroundImage?: string | undefined;
+  elements: OrganScreenElement[];
+  zIndex?: number;
+}
+
 export interface OrganData {
   name: string;
   globalGain: number; // Global gain in dB from [Organ] section
@@ -55,6 +79,7 @@ export interface OrganData {
   manuals: OrganManual[];
   ranks: Record<string, OrganRank>;
   tremulants: Record<string, OrganTremulant>;
+  screens: OrganScreenData[];
   basePath: string;
   sourcePath: string;
 }
@@ -132,9 +157,89 @@ export function parseODF(filePath: string): OrganData {
     manuals: [],
     ranks: {},
     tremulants: {},
+    screens: [],
     basePath,
     sourcePath: filePath
   };
+
+  // 0a. Extract Panels (Screens)
+  const panels: Record<string, any> = {};
+  Object.keys(parsed).forEach((key) => {
+    if (key.startsWith('Panel') && !key.includes('Switch') && !key.includes('Image') && !key.includes('Label')) {
+      const panelId = normalizeId(key.replace('Panel', ''));
+      panels[panelId] = parsed[key];
+    }
+  });
+
+  const allSwitches: Record<string, any> = {};
+  Object.keys(parsed).forEach((key) => {
+    if (key.startsWith('Switch')) {
+      const switchId = normalizeId(key.replace('Switch', ''));
+      allSwitches[switchId] = parsed[key];
+    }
+  });
+
+  Object.keys(panels).forEach(panelId => {
+    const panel = panels[panelId];
+    const screen: OrganScreenData = {
+      id: panelId,
+      name: panel.Name || `Panel ${panelId}`,
+      width: parseInt(panel.DispScreenSizeHoriz || '1024'),
+      height: parseInt(panel.DispScreenSizeVert || '768'),
+      elements: []
+    };
+
+    // Background images for panels
+    const numPanelImages = parseInt(panel.NumberOfImages || '0');
+    for (let i = 1; i <= numPanelImages; i++) {
+      const imgKey = `Panel${panelId}Image${i.toString().padStart(3, '0')}`;
+      const imgData = parsed[imgKey];
+      if (imgData && imgData.Image) {
+        // Usually the first image is the background
+        const imgPath = path.resolve(basePath, imgData.Image.replace(/\\/g, '/'));
+        if (i === 1) screen.backgroundImage = imgPath;
+        else {
+          screen.elements.push({
+            id: `${panelId}_img_${i}`,
+            type: 'Image',
+            name: `Image ${i}`,
+            x: parseInt(imgData.PositionX || '0'),
+            y: parseInt(imgData.PositionY || '0'),
+            width: 0, // Need to load image to know size, or it might be in ODF
+            height: 0,
+            imageOff: imgPath
+          });
+        }
+      }
+    }
+
+    // Switches on panels
+    const numPanelSwitches = parseInt(panel.NumberOfSwitches || '0');
+    for (let i = 1; i <= numPanelSwitches; i++) {
+      const psKey = `Panel${panelId}Switch${i.toString().padStart(3, '0')}`;
+      const psData = parsed[psKey];
+      if (psData) {
+        const switchId = normalizeId(psData.Switch || psData.SwitchID || '001');
+        const globalSwitch = allSwitches[switchId];
+        if (globalSwitch) {
+          screen.elements.push({
+            id: `${panelId}_sw_${switchId}`,
+            type: 'Switch',
+            name: globalSwitch.Name || `Switch ${switchId}`,
+            x: parseInt(globalSwitch.PositionX || '0'),
+            y: parseInt(globalSwitch.PositionY || '0'),
+            width: parseInt(globalSwitch.MouseRectWidth || '50'),
+            height: parseInt(globalSwitch.MouseRectHeight || '50'),
+            imageOn: globalSwitch.ImageOn ? path.resolve(basePath, globalSwitch.ImageOn.replace(/\\/g, '/')) : undefined,
+            imageOff: globalSwitch.ImageOff ? path.resolve(basePath, globalSwitch.ImageOff.replace(/\\/g, '/')) : undefined,
+            linkId: switchId
+          });
+        }
+      }
+    }
+
+    organData.screens.push(screen);
+  });
 
   // 0. Extract Tremulants
   Object.keys(parsed).forEach((key) => {

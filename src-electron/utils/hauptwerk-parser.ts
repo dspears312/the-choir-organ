@@ -1,7 +1,7 @@
 import { XMLParser } from 'fast-xml-parser';
 import fs from 'fs';
 import path from 'path';
-import { OrganData, OrganStop, OrganManual, OrganRank, OrganPipe, OrganTremulant, NOISE_KEYWORDS } from './odf-parser';
+import { OrganData, OrganStop, OrganManual, OrganRank, OrganPipe, OrganTremulant, NOISE_KEYWORDS, OrganScreenData, OrganScreenElement } from './odf-parser';
 
 const GLOBAL_ATTENUATION = 14;
 
@@ -16,22 +16,28 @@ export function parseHauptwerk(filePath: string): OrganData {
     const parser = new XMLParser({
         ignoreAttributes: false,
         attributeNamePrefix: '',
-        parseAttributeValue: true,
-        parseTagValue: true,
-        trimValues: true,
+        isArray: (name) => ['o', 'ObjectList', '_General', 'DisplayPage', 'ImageSet', 'ImageSetElement', 'ImageSetInstance', 'Switch'].includes(name)
     });
     const parsed = parser.parse(xmlData);
 
     const getObjectList = (type: string) => {
-        const list = parsed.Hauptwerk?.ObjectList?.find((l: any) => l.ObjectType === type);
-        if (!list) return [];
-        const result = list.o || [];
-        return Array.isArray(result) ? result : [result];
+        const allLists = Array.isArray(parsed.Hauptwerk?.ObjectList) ? parsed.Hauptwerk.ObjectList : [parsed.Hauptwerk?.ObjectList].filter(Boolean);
+        const lists = allLists.filter((l: any) => l.ObjectType === type || l.ObjectType === `_${type}`);
+        const results: any[] = [];
+        lists.forEach((list: any) => {
+            // Some lists use <o>, some use <TypeName> or <_TypeName>
+            const items = list.o || list[type] || list[`_${type}`] || [];
+            if (Array.isArray(items)) {
+                results.push(...items);
+            } else {
+                results.push(items);
+            }
+        });
+        return results;
     };
 
     // Extract General info
-    const generalList = parsed.Hauptwerk?.ObjectList?.find((l: any) => l.ObjectType === '_General');
-    const general = generalList?._General || (Array.isArray(generalList?.o) ? generalList.o[0] : generalList?.o);
+    const general = getObjectList('General')[0];
     const organName = general?.Identification_Name || 'Unknown Hauptwerk Organ';
     const basePath = path.normalize(path.dirname(filePath));
 
@@ -61,6 +67,7 @@ export function parseHauptwerk(filePath: string): OrganData {
         manuals: [],
         ranks: {},
         tremulants: {},
+        screens: [],
         basePath,
         sourcePath: filePath,
     };
@@ -152,6 +159,244 @@ export function parseHauptwerk(filePath: string): OrganData {
         }
     });
 
+    const resolvePath = (sampleID: string | undefined): string | undefined => {
+        if (!sampleID) return undefined;
+        const info = sampleMap.get(sampleID);
+        if (!info) return undefined;
+
+        if (info.packageID) {
+            const pkgIDNormalized = info.packageID.padStart(6, '0');
+            const pkgKey = `${pkgIDNormalized}/${info.relPath.toLowerCase()}`;
+            if (sampleIndex.has(pkgKey)) return sampleIndex.get(pkgKey);
+        }
+
+        const relKey = info.relPath.toLowerCase();
+        const indexedPath = sampleIndex.get(relKey);
+        if (indexedPath) return indexedPath;
+
+        // Last resort: relative to ODF (only if index search failed)
+        return path.resolve(basePath, info.relPath);
+    };
+
+    const resolveImagePath = (pathOrID: string | undefined): string | undefined => {
+        if (!pathOrID) return undefined;
+        // If it's a sample ID (numeric), resolve via sampleMap
+        if (/^\d+$/.test(pathOrID)) {
+            return resolvePath(pathOrID);
+        }
+        // Otherwise, it's a relative path
+        const relPath = pathOrID.replace(/\\/g, '/');
+        const relPathLower = relPath.toLowerCase();
+
+        // 1. Check if it exists in any package via the index
+        const indexedPath = sampleIndex.get(relPathLower);
+        if (indexedPath) return indexedPath;
+
+        // 2. Check if it's explicitly indexed with a package ID (if we had one, but for raw paths we don't always)
+        // However, the walk function indexes everything by its lowercased relative path already.
+
+        // 3. Last resort: check the base path (relative to the organ definition)
+        return path.resolve(basePath, relPath);
+    };
+
+    // 0a. Display Pages (Screens)
+    const displayPages = getObjectList('DisplayPage');
+    const imageSets = getObjectList('ImageSet');
+    const imageSetInstances = getObjectList('ImageSetInstance');
+    const imageSetElements = getObjectList('ImageSetElement');
+    const switches = getObjectList('Switch');
+    const stopObjects = getObjectList('Stop');
+    const switchLinkages = getObjectList('SwitchLinkage');
+
+    // Linkage mapping: Switch ID -> Master Switch ID -> Stop ID
+    const masterSwitchToStopId = new Map<string, string>();
+    stopObjects.forEach((s: any) => {
+        if (s.a && s.d) masterSwitchToStopId.set(s.d.toString(), s.a.toString());
+    });
+
+    const directLinks = new Map<string, string[]>();
+    switchLinkages.forEach((sl: any) => {
+        const a = sl.a?.toString();
+        const b = sl.b?.toString();
+        if (a && b) {
+            if (!directLinks.has(a)) directLinks.set(a, []);
+            directLinks.get(a)!.push(b);
+        }
+    });
+
+    const switchIdToStopId = new Map<string, string>();
+    const resolveStopId = (sid: string, visited = new Set<string>()): string | null => {
+        if (visited.has(sid)) return null;
+        visited.add(sid);
+
+        const stopId = masterSwitchToStopId.get(sid);
+        if (stopId) return stopId;
+
+        const nextSids = directLinks.get(sid) || [];
+        for (const next of nextSids) {
+            const found = resolveStopId(next, visited);
+            if (found) return found;
+        }
+        return null;
+    };
+
+    switches.forEach((sw: any) => {
+        const sid = sw.a?.toString();
+        if (sid) {
+            const stopId = resolveStopId(sid);
+            if (stopId) switchIdToStopId.set(sid, stopId);
+        }
+    });
+
+    // Group ImageSets and ImageSetElements by ID to merge multi-state data
+
+    // Group ImageSets and ImageSetElements by ID to merge multi-state data
+    const imageSetMap = new Map<string, any>();
+
+    // 1. Initial ImageSet data (contains masks/labels)
+    imageSets.forEach((is: any) => {
+        const id = is.a?.toString();
+        if (!id) return;
+        if (!imageSetMap.has(id)) {
+            imageSetMap.set(id, { ...is });
+        } else {
+            Object.assign(imageSetMap.get(id), is);
+        }
+    });
+
+    // 2. Merge ImageSetElement data (contains actual bitmap paths)
+    imageSetElements.forEach((ise: any) => {
+        const id = ise.a?.toString();
+        if (!id) return;
+        let entry = imageSetMap.get(id);
+        if (!entry) {
+            entry = { a: id };
+            imageSetMap.set(id, entry);
+        }
+
+        const stage = parseInt(ise.b || '1');
+        const imgPath = ise.d?.toString();
+        if (imgPath) {
+            if (stage === 1) {
+                entry.imageOff = imgPath;
+            } else if (stage === 2) {
+                entry.imageOn = imgPath;
+            } else if (!entry.imageOff) {
+                entry.imageOff = imgPath;
+            }
+        }
+    });
+
+    displayPages.forEach((page: any) => {
+        const pageID = page.a.toString();
+        const screen: OrganScreenData = {
+            id: pageID,
+            name: page.b || `Page ${pageID}`,
+            width: parseInt(general?.Display_ConsoleScreenWidthPixels || general?.Display_ConsoleScreenWidthPixels_A || '1024'), // Check both
+            height: parseInt(general?.Display_ConsoleScreenHeightPixels || general?.Display_ConsoleScreenHeightPixels_A || '768'),
+            elements: []
+        };
+
+        imageSetInstances.forEach((isi: any) => {
+            if (isi.e?.toString() === pageID) {
+                const imageSetID = isi.c?.toString();
+                const imageSet = imageSetMap.get(imageSetID);
+                if (imageSet) {
+                    // f: Layer/Z-index (Hauptwerk standard)
+                    let zIndex = parseInt(isi.f || '1');
+                    let x = parseInt(isi.g || '0');
+                    let y = parseInt(isi.h || '0');
+                    let w = parseInt(isi.i || imageSet.g || '0');
+                    let h = parseInt(isi.j || imageSet.i || '0');
+
+                    // If X/Y are 0 but f,g are set, maybe f,g is X,Y?
+                    // (Some older HW formats or specific implementations)
+                    if (x === 0 && y === 0 && (isi.f || '0') !== '0' && (isi.g || '0') !== '0' && zIndex > 100) {
+                        x = parseInt(isi.f || '0');
+                        y = parseInt(isi.g || '0');
+                        zIndex = 1; // Reset zIndex if we use f as X
+                    }
+
+                    const element: OrganScreenElement = {
+                        id: isi.a.toString(),
+                        type: 'Image',
+                        name: (isi.b || imageSet.b || `Image ${isi.a}`).toString(),
+                        x,
+                        y,
+                        width: w,
+                        height: h,
+                        zIndex
+                    };
+
+                    // Resolve paths
+                    if (imageSet.imageOff) element.imageOff = resolveImagePath(imageSet.imageOff.toString());
+                    if (imageSet.imageOn) element.imageOn = resolveImagePath(imageSet.imageOn.toString());
+
+                    // Fallbacks for masks if actual images are missing
+                    if (!element.imageOff && imageSet.j) element.imageOff = resolveImagePath(imageSet.j.toString());
+                    if (!element.imageOn && imageSet.k) element.imageOn = resolveImagePath(imageSet.k.toString());
+                    if (!element.imageOff && imageSet.d) element.imageOff = resolveImagePath(imageSet.d.toString());
+
+                    // Switch detection
+                    const isiID = isi.a.toString();
+                    const switchObj = switches.find((sw: any) =>
+                        sw.a?.toString() === isiID ||
+                        sw.k?.toString() === imageSetID ||
+                        sw.c?.toString() === imageSetID ||
+                        sw.a?.toString() === isi.m?.toString()
+                    );
+
+                    if (switchObj) {
+                        element.type = 'Switch';
+                        const sid = switchObj.a.toString();
+                        element.linkId = switchIdToStopId.get(sid) || sid;
+                    }
+
+                    // Decide on a default zIndex. 
+                    // Hauptwerk standard is 1, but we use 7 as a default for "foreground"
+                    // to ensure knobs (often missing 'f') stay above backgrounds (often 'f=1' or 'f=5').
+                    const nameLower = (isi.b || imageSet.b || "").toLowerCase();
+                    const isFullscreen = (a: any) => a.x === 0 && a.y === 0 && (a.width >= screen.width * 0.95 || a.width === 0);
+                    const isBG = nameLower.includes('background') || nameLower.includes('pozadi') || nameLower.includes('stul') || isFullscreen(element);
+
+                    let newZIndex = parseInt(isi.f || (isBG ? '1' : '7'));
+                    element.zIndex = newZIndex;
+
+                    if (isBG && !screen.backgroundImage) {
+                        screen.backgroundImage = element.imageOff || element.imageOn;
+                        if (!screen.backgroundImage && imageSet.d) {
+                            screen.backgroundImage = resolveImagePath(imageSet.d.toString());
+                        }
+                    }
+
+                    // Always add to elements, don't pull out the background
+                    screen.elements.push(element);
+                }
+            }
+        });
+
+        // Stable sort elements by zIndex to ensure correct rendering order.
+        // We also prioritize background-like elements to the bottom of their layer.
+        screen.elements.sort((a, b) => {
+            const az = a.zIndex || 0;
+            const bz = b.zIndex || 0;
+            if (az !== bz) return az - bz;
+
+            // Tie-breaker: Move backgrounds to the bottom of the layer
+            const isBG = (el: any) => el.name.toLowerCase().includes('background') || el.name.toLowerCase().includes('pozadi') || (el.x === 0 && el.y === 0 && (el.width >= screen.width * 0.95 || el.width === 0));
+
+            const aIsBG = isBG(a);
+            const bIsBG = isBG(b);
+
+            if (aIsBG && !bIsBG) return -1;
+            if (!aIsBG && bIsBG) return 1;
+
+            return 0; // Maintain original XML order for same layer/type
+        });
+
+        organData.screens.push(screen);
+    });
+
     // 6. Pipes (SoundEngine01)
     const enginePipes = getObjectList('Pipe_SoundEngine01');
     let resolvedCount = 0;
@@ -192,29 +437,8 @@ export function parseHauptwerk(filePath: string): OrganData {
             releaseSampleID = setIDToReleaseSample.get(layerSets.release);
         }
 
-        // Fallback: common naming convention lookup
-        if (!attackSampleID) {
-            attackSampleID = setIDToAttackSample.get(pipeID + '0');
-        }
-
-        const resolvePath = (sampleID: string | undefined): string | undefined => {
-            if (!sampleID) return undefined;
-            const info = sampleMap.get(sampleID);
-            if (!info) return undefined;
-
-            if (info.packageID) {
-                const pkgIDNormalized = info.packageID.padStart(6, '0');
-                const pkgKey = `${pkgIDNormalized}/${info.relPath.toLowerCase()}`;
-                if (sampleIndex.has(pkgKey)) return sampleIndex.get(pkgKey);
-            }
-
-            const relKey = info.relPath.toLowerCase();
-            const indexedPath = sampleIndex.get(relKey);
-            if (indexedPath) return indexedPath;
-
-            // Last resort: relative to ODF (only if index search failed)
-            return path.resolve(basePath, info.relPath);
-        };
+        //wavPath = resolvePath(attackSampleID) || '';
+        //relPathStr = resolvePath(releaseSampleID);
 
         const wavPath = resolvePath(attackSampleID) || '';
         const relPathStr = resolvePath(releaseSampleID);
@@ -378,8 +602,9 @@ function walk(dir: string, callback: (filePath: string) => void) {
             walk(fullPath, callback);
         } else if (stat.isFile()) {
             const lowerFile = file.toLowerCase();
-            // Accept both wav and wv (lossless compression) formats
-            if (lowerFile.endsWith('.wav') || lowerFile.endsWith('.wv')) {
+            // Accept both wav and wv (lossless compression) formats, and common image formats
+            if (lowerFile.endsWith('.wav') || lowerFile.endsWith('.wv') ||
+                lowerFile.endsWith('.bmp') || lowerFile.endsWith('.png') || lowerFile.endsWith('.jpg')) {
                 callback(fullPath);
             }
         }
