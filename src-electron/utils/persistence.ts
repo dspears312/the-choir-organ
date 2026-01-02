@@ -91,3 +91,12 @@ export function getRecents(): string[] {
     return (settings.recentOdfs || []).filter(p => typeof p === 'string');
 }
 
+export function removeFromRecent(filePath: string) {
+    if (!filePath || typeof filePath !== 'string') return;
+    const settings = loadSettings();
+    let recents = settings.recentOdfs || [];
+    recents = recents.filter(p => typeof p === 'string');
+    recents = recents.filter(p => p !== filePath);
+    saveSettings({ recentOdfs: recents });
+}
+

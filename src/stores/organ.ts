@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia';
+import { markRaw } from 'vue';
 import { synth } from '../services/synth-engine';
 
 export interface Bank {
@@ -46,7 +47,8 @@ export const useOrganStore = defineStore('organ', {
         drivePollInterval: null as any,
         isExtracting: false,
         extractionProgress: 0,
-        extractionFile: ''
+        extractionFile: '',
+        midiListener: null as ((event: any) => void) | null
     }),
     getters: {
         targetVolumeLabel: (state) => {
@@ -105,8 +107,6 @@ export const useOrganStore = defineStore('organ', {
                     this.stopVolumes[id] = data.stops[id].volume || 100;
                 });
 
-                // Setup MIDI
-                this.initMIDI();
                 // Refresh recents
                 this.fetchRecents();
 
@@ -222,11 +222,20 @@ export const useOrganStore = defineStore('organ', {
             navigator.requestMIDIAccess().then((access) => {
                 this.midiAccess = access;
                 this.midiStatus = access.inputs.size > 0 ? 'Connected' : 'Disconnected';
+
+                // Store the bound listener so we can remove it even if the store instance changes (HMR)
+                // We markRaw to prevent Vue from proxying the function, but to be 100% safe about reference equality
+                // regarding what is stored vs what is added, we assign then read back.
+                const listener = (event: any) => this.handleMIDIMessage(event);
+                this.midiListener = markRaw(listener);
+                const boundListener = this.midiListener;
+
                 access.onstatechange = () => {
                     this.midiStatus = access.inputs.size > 0 ? 'Connected' : 'Disconnected';
                 };
                 access.inputs.forEach((input) => {
-                    input.addEventListener('midimessage', this.handleMIDIMessage);
+                    console.log(`[MIDI] Adding listener to input: ${input.name} (id: ${input.id})`);
+                    input.addEventListener('midimessage', boundListener);
                 });
             }).catch((err) => {
                 this.midiStatus = 'Error';
@@ -236,9 +245,13 @@ export const useOrganStore = defineStore('organ', {
 
         stopMIDI() {
             if (this.midiAccess) {
+                console.log('[MIDI] Stopping MIDI service and removing listeners...');
+                const listener = this.midiListener || this.handleMIDIMessage;
                 this.midiAccess.inputs.forEach((input) => {
-                    input.removeEventListener('midimessage', this.handleMIDIMessage);
+                    console.log(`[MIDI] Removing listener from input: ${input.name}`);
+                    input.removeEventListener('midimessage', listener as EventListener);
                 });
+                this.midiListener = null;
                 this.midiAccess.onstatechange = null;
                 this.midiAccess = null;
             }
@@ -249,6 +262,7 @@ export const useOrganStore = defineStore('organ', {
         async handleMIDIMessage(event: any) {
             const [status, note, velocity] = event.data;
             const type = status & 0xf0;
+            console.log(`[MIDI] Event: Status=${status}, Note=${note}, Velocity=${velocity}, Type=${type}`);
 
             if (type === 144 && velocity > 0) { // Note On
                 this.activeMidiNotes.add(note);
@@ -661,6 +675,25 @@ export const useOrganStore = defineStore('organ', {
                 reader.readAsText(file);
             };
             input.click();
+        },
+
+        async removeRecent(path: string) {
+            await (window as any).myApi.removeFromRecent(path);
+            await this.fetchRecents();
+        },
+
+        async getOrganSize(path: string) {
+            const result = await (window as any).myApi.calculateOrganSize(path);
+            return result.size || 0;
+        },
+
+        async deleteOrgan(path: string) {
+            const result = await (window as any).myApi.deleteOrganFiles(path);
+            if (result.success) {
+                await this.fetchRecents();
+                return { success: true };
+            }
+            return { success: false, error: result.error };
         }
     }
 });

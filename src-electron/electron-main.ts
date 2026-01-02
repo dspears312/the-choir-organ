@@ -9,8 +9,9 @@ import { parseODF } from './utils/odf-parser';
 import { parseHauptwerk } from './utils/hauptwerk-parser';
 import { renderNote } from './utils/renderer';
 import { readWav } from './utils/wav-reader';
-import { addToRecent, getRecents, saveOrganState, loadOrganState } from './utils/persistence';
+import { addToRecent, getRecents, saveOrganState, loadOrganState, removeFromRecent } from './utils/persistence';
 import { handleRarExtraction } from './utils/archive-handler';
+import { scanOrganDependencies } from './utils/organ-manager';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const { autoUpdater } = require('electron-updater');
@@ -465,6 +466,76 @@ ipcMain.handle('list-removable-drives', async () => {
   } catch (e) {
     console.error('list-removable-drives error:', e);
     return [];
+  }
+});
+ipcMain.handle('remove-from-recent', async (event, filePath: string) => {
+  removeFromRecent(filePath);
+  return { success: true };
+});
+
+function calculateFolderSize(itemPath: string): number {
+  let totalSize = 0;
+  try {
+    const stats = fs.statSync(itemPath);
+    if (stats.isFile()) {
+      totalSize += stats.size;
+    } else if (stats.isDirectory()) {
+      const files = fs.readdirSync(itemPath);
+      for (const file of files) {
+        totalSize += calculateFolderSize(path.join(itemPath, file));
+      }
+    }
+  } catch (error) {
+    // Ignore access errors
+  }
+  return totalSize;
+}
+
+ipcMain.handle('calculate-organ-size', async (event, filePath: string) => {
+  try {
+    const dependencies = await scanOrganDependencies(filePath);
+    let totalSize = 0;
+    for (const dep of dependencies) {
+      totalSize += calculateFolderSize(dep);
+    }
+    return { size: totalSize };
+  } catch (e: any) {
+    console.error('Calculate size error:', e);
+    return { error: e.message };
+  }
+});
+
+ipcMain.handle('delete-organ-files', async (event, filePath: string) => {
+  try {
+    // Basic Safety Checks
+    const userDataPath = app.getPath('userData');
+
+    // We get the dependencies list first
+    const dependencies = await scanOrganDependencies(filePath);
+
+    // Validate each dependency
+    for (const dep of dependencies) {
+      // Must exist
+      if (!fs.existsSync(dep)) throw new Error(`Path does not exist: ${dep}`);
+
+      // Root check
+      const isRoot = path.dirname(dep) === dep;
+      if (isRoot) throw new Error('Cannot delete root directory.');
+    }
+
+    // Perform Deletion
+    console.log(`Deleting organ dependencies:`, dependencies);
+    for (const dep of dependencies) {
+      fs.rmSync(dep, { recursive: true, force: true });
+    }
+
+    // Also remove from recents
+    removeFromRecent(filePath);
+
+    return { success: true };
+  } catch (e: any) {
+    console.error('Delete organ error:', e);
+    return { error: e.message };
   }
 });
 

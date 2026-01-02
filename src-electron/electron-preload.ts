@@ -20,6 +20,9 @@ contextBridge.exposeInMainWorld('myApi', {
     listRemovableDrives: () => ipcRenderer.invoke('list-removable-drives'),
     formatVolume: (path: string, label: string) => ipcRenderer.invoke('format-volume', { path, label }),
     openExternalUrl: (url: string) => ipcRenderer.invoke('open-external-url', url),
+    removeFromRecent: (path: string) => ipcRenderer.invoke('remove-from-recent', path),
+    calculateOrganSize: (path: string) => ipcRenderer.invoke('calculate-organ-size', path),
+    deleteOrganFiles: (path: string) => ipcRenderer.invoke('delete-organ-files', path),
 
     // Updates
     checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),

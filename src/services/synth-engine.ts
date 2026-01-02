@@ -161,6 +161,8 @@ export class SynthEngine {
             source.playbackRate.value = Math.pow(2, totalCents / 1200);
         }
 
+        console.log(`[Synth] Note On: Note=${note}, Stop=${stopId}, Pipe=${pipePath}`);
+
         const gainNode = this.context.createGain();
         const linearGain = Math.pow(10, (gainDb || 0) / 20);
 
@@ -268,6 +270,7 @@ export class SynthEngine {
     }
 
     noteOff(note: number, stopId: string) {
+        console.log(`[Synth] Note Off: Note=${note}, Stop=${stopId}`);
         const requestKey = `${note}-${stopId}`;
         this.requestedNotes.delete(requestKey);
 
@@ -385,6 +388,23 @@ export class SynthEngine {
         this.activeVoices = [];
         this.requestedNotes.clear();
     }
+
+    close() {
+        this.clearAll();
+        if (this.context.state !== 'closed') {
+            this.context.close();
+        }
+    }
 }
 
 export const synth = new SynthEngine();
+
+if (import.meta.hot) {
+    import.meta.hot.dispose(() => {
+        try {
+            synth.close();
+        } catch (e) {
+            console.error('Failed to close synth on HMR', e);
+        }
+    });
+}

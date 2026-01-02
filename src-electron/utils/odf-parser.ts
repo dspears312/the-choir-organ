@@ -97,12 +97,22 @@ function parseGain(section: any, prefix: string = ''): number {
       g += 20 * Math.log10(amp / 100);
     }
   }
+
   if (!prefix && section['AmplitudeLevel'] !== undefined) {
     const amp = parseFloat(section['AmplitudeLevel']);
     if (amp > 0) {
       g += 20 * Math.log10(amp / 100);
     }
   }
+
+  // NEW CHECK: Check for prefixed AmplitudeLevel (e.g. Pipe001AmplitudeLevel)
+  if (section[prefix + 'AmplitudeLevel'] !== undefined) {
+    const amp = parseFloat(section[prefix + 'AmplitudeLevel']);
+    if (amp > 0) {
+      g += 20 * Math.log10(amp / 100);
+    }
+  }
+
   return isNaN(g) ? 0 : g;
 }
 
