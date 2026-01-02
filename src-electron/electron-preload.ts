@@ -23,8 +23,10 @@ contextBridge.exposeInMainWorld('myApi', {
     removeFromRecent: (path: string) => ipcRenderer.invoke('remove-from-recent', path),
     calculateOrganSize: (path: string) => ipcRenderer.invoke('calculate-organ-size', path),
     deleteOrganFiles: (path: string) => ipcRenderer.invoke('delete-organ-files', path),
+    triggerGC: () => ipcRenderer.invoke('trigger-gc'),
 
     // Updates
+
     checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
     downloadUpdate: () => ipcRenderer.invoke('download-update'),
     quitAndInstall: () => ipcRenderer.invoke('quit-and-install'),
@@ -52,5 +54,13 @@ contextBridge.exposeInMainWorld('myApi', {
         const listener = (_event: any, error: string) => callback(error);
         ipcRenderer.on('update-error', listener);
         return () => ipcRenderer.removeListener('update-error', listener);
+    },
+
+    // System Stats
+    onMemoryUpdate: (callback: (bytes: number) => void) => {
+        const listener = (_event: any, bytes: number) => callback(bytes);
+        ipcRenderer.on('memory-update', listener);
+        return () => ipcRenderer.removeListener('memory-update', listener);
     }
+
 });

@@ -389,6 +389,16 @@ export class SynthEngine {
         this.requestedNotes.clear();
     }
 
+    unloadSamples() {
+        this.clearAll();
+        // Clear references to large audio buffers
+        this.buffers = {};
+        this.metadata = {};
+        this.loadingTasks = {};
+        console.log('[Synth] All samples unloaded from memory.');
+    }
+
+
     close() {
         this.clearAll();
         if (this.context.state !== 'closed') {

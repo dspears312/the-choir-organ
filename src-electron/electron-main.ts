@@ -15,8 +15,26 @@ import { scanOrganDependencies } from './utils/organ-manager';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const { autoUpdater } = require('electron-updater');
+import v8 from 'v8';
+import vm from 'vm';
+
+// Programmatically Enable GC in Main Process (Node.js)
+v8.setFlagsFromString('--expose_gc');
+if (!global.gc) {
+  try {
+    global.gc = vm.runInNewContext('gc');
+    console.log('[Main] V8 GC exposed programmatically.');
+  } catch (e) {
+    console.error('[Main] Failed to expose GC:', e);
+  }
+}
+
+// Pass flags to Renderer Process (Chrome)
+app.commandLine.appendSwitch('js-flags', '--expose_gc --max_old_space_size=12288');
+
 
 // needed in case process is undefined under Linux
+
 const platform = process.platform || os.platform();
 
 const currentDir = fileURLToPath(new URL('.', import.meta.url));
@@ -35,8 +53,40 @@ protocol.registerSchemesAsPrivileged([
   }
 ]);
 
+
+
+
+
+
+
 let mainWindow: BrowserWindow | undefined;
 let isCancellationRequested = false;
+let memoryInterval: NodeJS.Timeout | null = null;
+
+
+function startMemoryMonitoring(window: BrowserWindow) {
+  if (memoryInterval) clearInterval(memoryInterval);
+
+  memoryInterval = setInterval(async () => {
+    if (!window || window.isDestroyed()) {
+      if (memoryInterval) clearInterval(memoryInterval);
+      return;
+    }
+
+    try {
+      const metrics = app.getAppMetrics();
+      // Calculate total working set size (RAM usage) across all processes
+      // workingSetSize is in Kilobytes, so multiply by 1024 to get Bytes
+      const totalBytes = metrics.reduce((acc, metric) => acc + (metric.memory.workingSetSize * 1024), 0);
+
+      window.webContents.send('memory-update', totalBytes);
+    } catch (e) {
+      console.error('Failed to get memory usage', e);
+    }
+  }, 2000); // Update every 2 seconds
+}
+
+
 
 async function listDrives(): Promise<any[]> {
   if (process.platform === 'darwin') {
@@ -184,6 +234,7 @@ async function createWindow() {
   /**
    * Initial window options
    */
+
   mainWindow = new BrowserWindow({
     icon: path.resolve(currentDir, 'icons/icon.png'), // tray icon
     width: 1200,
@@ -215,9 +266,17 @@ async function createWindow() {
     });
   }
 
+  startMemoryMonitoring(mainWindow);
+
+
   mainWindow.on('closed', () => {
     mainWindow = undefined;
+    if (memoryInterval) {
+      clearInterval(memoryInterval);
+      memoryInterval = null;
+    }
   });
+
 }
 
 // IPC Handlers
@@ -582,6 +641,23 @@ ipcMain.handle('format-volume', async (event, { path: folderPath, label }) => {
     });
   });
 });
+
+ipcMain.handle('trigger-gc', () => {
+  try {
+    if (global.gc) {
+      global.gc();
+      console.log('Manual GC triggered in Main Process');
+      return { success: true };
+    } else {
+      console.warn('GC not exposed. Run with --js-flags="--expose-gc"');
+      return { success: false, error: 'GC not exposed' };
+    }
+  } catch (e: any) {
+    console.error('GC failed:', e);
+    return { success: false, error: e.message };
+  }
+});
+
 
 // Update Handlers
 ipcMain.handle('check-for-updates', async () => {

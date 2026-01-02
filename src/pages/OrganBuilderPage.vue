@@ -8,6 +8,15 @@
                 <div class="text-h4 font-cinzel text-amber-8 text-shadow">{{ organStore.organData?.name }}</div>
 
                 <div class="row items-center q-gutter-x-lg">
+                    <div class="ram-indicator row items-center q-gutter-x-sm" v-if="ramUsage > 0">
+                        <q-icon name="memory" :style="{ color: ramColor }" size="16px" />
+                        <span class="text-caption font-cinzel" :style="{ color: ramColor }">RAM: {{ formattedRam
+                        }}</span>
+                        <q-tooltip class="bg-grey-10 text-white shadow-4">
+                            App Memory Usage: {{ formattedRam }}
+                        </q-tooltip>
+                    </div>
+
                     <div class="status-indicator row items-center q-gutter-x-sm cursor-pointer hover-opacity-100"
                         @click="organStore.initMIDI" :class="{ 'opacity-50': organStore.midiStatus !== 'Connected' }">
                         <q-icon name="circle" :color="midiColor" size="12px" />
@@ -410,6 +419,44 @@ const showDiskWarning = ref(false);
 const showFormatDialog = ref(false);
 const showAdvancedDisk = ref(false);
 
+// RAM Monitoring
+const ramUsage = ref(0);
+const formattedRam = computed(() => {
+    return (ramUsage.value / 1024 / 1024 / 1024).toFixed(2) + ' GB';
+});
+
+const ramColor = computed(() => {
+    const usageGB = ramUsage.value / 1024 / 1024 / 1024;
+
+    // RGB Values
+    // Green: #4caf50 (76, 175, 80)
+    // Yellow/Orange: #ff9800 (255, 152, 0)
+    // Red: #f44336 (244, 67, 54)
+
+    if (usageGB <= 1) return '#4caf50'; // Green
+
+    if (usageGB < 2) {
+        // Interpolate Green -> Yellow
+        const t = (usageGB - 1); // 0 to 1
+        const r = Math.round(76 + (255 - 76) * t);
+        const g = Math.round(175 + (152 - 175) * t);
+        const b = Math.round(80 + (0 - 80) * t);
+        return `rgb(${r}, ${g}, ${b})`;
+    } else if (usageGB < 4) {
+        // Interpolate Yellow -> Red
+        const t = (usageGB - 2) / 2; // 0 to 1
+        const r = Math.round(255 + (244 - 255) * t);
+        const g = Math.round(152 + (67 - 152) * t);
+        const b = Math.round(0 + (54 - 0) * t);
+        return `rgb(${r}, ${g}, ${b})`;
+    } else {
+        return '#f44336'; // Red
+    }
+});
+
+let ramListenerCleanup: (() => void) | null = null;
+
+
 // Virtual Stop logic
 const showVsDialog = ref(false);
 const vsForm = ref({
@@ -424,10 +471,11 @@ const vsForm = ref({
 });
 
 function goBack() {
-    organStore.organData = null;
+    organStore.performCleanup();
     router.push('/');
     // window.location.reload();
 }
+
 
 function openCreateVirtualStop(stopId: string) {
     const stop = organStore.organData?.stops[stopId];
@@ -541,10 +589,19 @@ onMounted(() => {
         return;
     }
     organStore.initMIDI();
+
+    // Start RAM monitoring
+    if ((window as any).myApi?.onMemoryUpdate) {
+        ramListenerCleanup = (window as any).myApi.onMemoryUpdate((bytes: number) => {
+            ramUsage.value = bytes;
+        });
+    }
 });
 
 onUnmounted(() => {
+    if (ramListenerCleanup) ramListenerCleanup();
     organStore.stopMIDI();
+
     if (organStore.drivePollInterval) {
         clearInterval(organStore.drivePollInterval);
         organStore.drivePollInterval = null;

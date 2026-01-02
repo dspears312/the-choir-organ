@@ -694,6 +694,40 @@ export const useOrganStore = defineStore('organ', {
                 return { success: true };
             }
             return { success: false, error: result.error };
+        },
+
+        async performCleanup() {
+            // Stop audio capability
+            this.stopMIDI();
+
+            // Explicitly unload samples from synth engine
+            synth.unloadSamples();
+
+            // Clear data references to allow GC
+            this.organData = null;
+
+            this.banks = [];
+            this.currentCombination = [];
+            this.stopVolumes = {};
+            this.virtualStops = [];
+
+            // Trigger Garbage Collection
+            if ((window as any).gc) {
+                try {
+                    (window as any).gc();
+                    console.log('Manual GC triggered in Renderer');
+                } catch (e) {
+                    console.warn('Renderer GC failed (run with --expose-gc)', e);
+                }
+            } else {
+                console.warn('window.gc is undefined. Run with --js-flags="--expose-gc"');
+            }
+
+            // Trigger Main Process GC
+            if ((window as any).myApi?.triggerGC) {
+                await (window as any).myApi.triggerGC();
+            }
         }
     }
 });
+
