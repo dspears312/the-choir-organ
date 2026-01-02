@@ -22,6 +22,11 @@
                   <q-item-section avatar><q-icon name="info" /></q-item-section>
                   <q-item-section>Quick Info Dialog</q-item-section>
                 </q-item>
+                <q-separator dark />
+                <q-item clickable v-close-popup @click="debugStore.open()">
+                  <q-item-section avatar><q-icon name="bug_report" color="red-5" /></q-item-section>
+                  <q-item-section class="text-red-5">Debug Inspector</q-item-section>
+                </q-item>
               </q-list>
             </q-menu>
           </q-btn>
@@ -35,6 +40,7 @@
 
     <HelpDialog v-model="showHelp" />
     <WalkthroughDrawer />
+    <DebugDrawer />
     <WalkthroughPointer />
   </q-layout>
 </template>
@@ -43,13 +49,16 @@
 import { ref, onMounted } from 'vue';
 import HelpDialog from 'src/components/HelpDialog.vue';
 import WalkthroughDrawer from 'src/components/WalkthroughDrawer.vue';
+import DebugDrawer from 'src/components/DebugDrawer.vue';
 import WalkthroughPointer from 'src/components/WalkthroughPointer.vue';
 import { useWalkthroughStore } from 'src/stores/walkthrough';
 import { useOrganStore } from 'src/stores/organ';
+import { useDebugStore } from 'src/stores/debug';
 
 const appVersion = ref('');
 const showHelp = ref(false);
 const walkthroughStore = useWalkthroughStore();
+const debugStore = useDebugStore();
 const organStore = useOrganStore();
 
 onMounted(async () => {

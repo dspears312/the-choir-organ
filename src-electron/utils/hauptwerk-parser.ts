@@ -153,7 +153,21 @@ export function parseHauptwerk(filePath: string): OrganData {
     enginePipes.forEach((p: any) => {
         const pipeID = p.a.toString();
         const rankID = p.b.toString();
-        const midiNote = parseInt(p.d || p.c);
+        let midiNote = parseInt(p.d);
+
+        if (isNaN(midiNote)) {
+            // Fallback: If 'd' is missing, some ODFs might map differently,
+            // but falling back to 'c' (AttackSampleID) is dangerous if it's non-numeric.
+            // Check if 'c' looks like a reasonable note (0-127) before using it.
+            const candidate = parseInt(p.c);
+            if (!isNaN(candidate) && candidate >= 0 && candidate <= 128) {
+                midiNote = candidate;
+            } else {
+                console.warn(`[HauptwerkParser] Pipe ${pipeID} (Rank ${rankID}) has invalid/missing MIDI Note (d=${p.d}). Formatted as NaN.`);
+                midiNote = NaN; // Let it be NaN so we can filter or debug, rather than a random SampleID
+            }
+        }
+
         const harmonicNumber = parseInt(p.f || '8'); // Hauptwerk uses 'f' for harmonic/footage mapping (where 8 = 8')
 
         if (!organData.ranks[rankID]) return;
@@ -210,7 +224,7 @@ export function parseHauptwerk(filePath: string): OrganData {
             wavPath,
             releasePath: relPathStr,
             midiNote,
-            gain: 0,
+            gain: parseFloat(p.u || p.AmplitudeLevelAdjustDecibels || '0'),
             tuning: 0,
             harmonicNumber,
         });
