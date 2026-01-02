@@ -159,8 +159,102 @@ export function parseODF(filePath: string): OrganData {
     tremulants: {},
     screens: [],
     basePath,
+
     sourcePath: filePath
   };
+
+  const allSwitches: Record<string, any> = {};
+  Object.keys(parsed).forEach((key) => {
+    if (key.startsWith('Switch')) {
+      const switchId = normalizeId(key.replace('Switch', ''));
+      allSwitches[switchId] = parsed[key];
+    }
+  });
+  // Pre-calculate SwitchID -> StopID map
+  const switchIdToStopId: Record<string, string> = {};
+  Object.keys(parsed).forEach((key) => {
+    if (key.startsWith('Stop')) {
+      const stopId = normalizeId(key.replace('Stop', ''));
+      const stopData = parsed[key];
+      const name = stopData.Name || `Stop ${stopId}`;
+      const isNoise = NOISE_KEYWORDS.some(kw => name.toLowerCase().includes(kw));
+
+      if (!isNoise) {
+        // Check for Switch001=XXX linkage
+        // Grandorgue stops can have multiple switches, but usually Switch001 is the primary drawknob
+        const numSwitches = parseInt(stopData.SwitchCount || '1'); // Default 1?
+        for (let i = 1; i <= numSwitches; i++) {
+          const swKey = `Switch${i.toString().padStart(3, '0')}`;
+          if (stopData[swKey]) {
+            const swId = normalizeId(stopData[swKey]);
+            // Only assign if not already assigned, or if current stop is definitely not noise (which we checked)
+            if (!switchIdToStopId[swId]) {
+              switchIdToStopId[swId] = stopId;
+            }
+          }
+        }
+      }
+    }
+  });
+
+  // 0. Extract Main Screen (Implicit)
+  if (parsed.Organ?.DispScreenSizeHoriz && parsed.Organ?.DispScreenSizeVert) {
+    const mainScreen: OrganScreenData = {
+      id: 'Main',
+      name: 'Main Console',
+      width: parseInt(parsed.Organ.DispScreenSizeHoriz),
+      height: parseInt(parsed.Organ.DispScreenSizeVert),
+      elements: []
+    };
+
+    // Global Images (belong to Main Screen)
+    // 1st image is background
+    const numImages = parseInt(parsed.Organ.NumberOfImages || '0');
+    for (let i = 1; i <= numImages; i++) {
+      const imgKey = `Image${i.toString().padStart(3, '0')}`; // e.g. [Image001]
+      const imgData = parsed[imgKey];
+      if (imgData && imgData.Image) {
+        const imgPath = path.resolve(basePath, imgData.Image.replace(/\\/g, '/'));
+        if (i === 1) {
+          mainScreen.backgroundImage = imgPath;
+        } else {
+          mainScreen.elements.push({
+            id: `Main_img_${i}`,
+            type: 'Image',
+            name: `Image ${i}`,
+            x: parseInt(imgData.PositionX || '0'),
+            y: parseInt(imgData.PositionY || '0'),
+            width: 0,
+            height: 0,
+            imageOff: imgPath
+          });
+        }
+      }
+    }
+
+    // Global Switches (belong to Main Screen if they have coordinates)
+    Object.keys(allSwitches).forEach(swId => {
+      const sw = allSwitches[swId];
+      // Only add if it has coordinates and is displayed (default Y? Check spec. usually Displayed=N hides it)
+      if (sw.PositionX !== undefined && sw.PositionY !== undefined && sw.Displayed !== 'N') {
+        mainScreen.elements.push({
+          id: `Main_sw_${swId}`,
+          type: 'Switch',
+          name: sw.Name || `Switch ${swId}`,
+          x: parseInt(sw.PositionX),
+          y: parseInt(sw.PositionY),
+          width: parseInt(sw.MouseRectWidth || '50'),
+          height: parseInt(sw.MouseRectHeight || '50'), // Default or specific
+          imageOn: sw.ImageOn ? path.resolve(basePath, sw.ImageOn.replace(/\\/g, '/')) : undefined,
+          imageOff: sw.ImageOff ? path.resolve(basePath, sw.ImageOff.replace(/\\/g, '/')) : undefined,
+          linkId: switchIdToStopId[swId] || swId // Use StopID if available, else SwitchID
+        });
+      }
+    });
+
+    organData.screens.push(mainScreen);
+    console.log(`[Parser] Found Main Screen: ${mainScreen.width}x${mainScreen.height} with ${mainScreen.elements.length} elements`);
+  }
 
   // 0a. Extract Panels (Screens)
   const panels: Record<string, any> = {};
@@ -171,13 +265,7 @@ export function parseODF(filePath: string): OrganData {
     }
   });
 
-  const allSwitches: Record<string, any> = {};
-  Object.keys(parsed).forEach((key) => {
-    if (key.startsWith('Switch')) {
-      const switchId = normalizeId(key.replace('Switch', ''));
-      allSwitches[switchId] = parsed[key];
-    }
-  });
+
 
   Object.keys(panels).forEach(panelId => {
     const panel = panels[panelId];
@@ -232,7 +320,7 @@ export function parseODF(filePath: string): OrganData {
             height: parseInt(globalSwitch.MouseRectHeight || '50'),
             imageOn: globalSwitch.ImageOn ? path.resolve(basePath, globalSwitch.ImageOn.replace(/\\/g, '/')) : undefined,
             imageOff: globalSwitch.ImageOff ? path.resolve(basePath, globalSwitch.ImageOff.replace(/\\/g, '/')) : undefined,
-            linkId: switchId
+            linkId: switchIdToStopId[switchId] || switchId // Use StopID if available, else SwitchID
           });
         }
       }

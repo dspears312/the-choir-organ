@@ -1,3 +1,4 @@
+
 import { parseHauptwerk } from './src-electron/utils/hauptwerk-parser';
 import path from 'path';
 
