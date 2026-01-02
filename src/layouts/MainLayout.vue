@@ -10,6 +10,21 @@
         <div class="text-caption text-grey-6 font-cinzel row items-center q-gutter-x-sm">
           <span>Sacred Music Library</span>
           <span v-if="appVersion" class="text-grey-9 q-ml-sm">v{{ appVersion }}</span>
+          <q-btn flat round icon="help_outline" color="amber-8" size="sm" class="q-ml-md">
+            <q-tooltip>Help & Walkthrough</q-tooltip>
+            <q-menu dark class="bg-grey-10 text-amber">
+              <q-list style="min-width: 150px">
+                <q-item clickable v-close-popup @click="walkthroughStore.start(organStore)">
+                  <q-item-section avatar><q-icon name="explore" /></q-item-section>
+                  <q-item-section>Start Guided Tour</q-item-section>
+                </q-item>
+                <q-item clickable v-close-popup @click="showHelp = true">
+                  <q-item-section avatar><q-icon name="info" /></q-item-section>
+                  <q-item-section>Quick Info Dialog</q-item-section>
+                </q-item>
+              </q-list>
+            </q-menu>
+          </q-btn>
         </div>
       </div>
     </q-header>
@@ -17,13 +32,25 @@
     <q-page-container style="display: flex; flex-direction: column;">
       <router-view />
     </q-page-container>
+
+    <HelpDialog v-model="showHelp" />
+    <WalkthroughDrawer />
+    <WalkthroughPointer />
   </q-layout>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
+import HelpDialog from 'src/components/HelpDialog.vue';
+import WalkthroughDrawer from 'src/components/WalkthroughDrawer.vue';
+import WalkthroughPointer from 'src/components/WalkthroughPointer.vue';
+import { useWalkthroughStore } from 'src/stores/walkthrough';
+import { useOrganStore } from 'src/stores/organ';
 
 const appVersion = ref('');
+const showHelp = ref(false);
+const walkthroughStore = useWalkthroughStore();
+const organStore = useOrganStore();
 
 onMounted(async () => {
   if ((window as any).myApi?.getAppVersion) {

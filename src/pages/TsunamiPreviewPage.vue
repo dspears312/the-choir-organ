@@ -9,7 +9,7 @@
 
       <div class="row items-center q-gutter-x-lg">
         <!-- Standardized MIDI Status -->
-        <div class="status-indicator row items-center q-gutter-x-xs cursor-pointer hover-opacity-100 q-mr-sm"
+        <div id="midi-status-preview" class="status-indicator row items-center q-gutter-x-xs cursor-pointer hover-opacity-100 q-mr-sm"
           @click="organStore.initMIDI" :class="{ 'opacity-50': organStore.midiStatus !== 'Connected' }">
           <q-icon name="circle" :color="midiStatusColor" size="12px" />
           <span class="text-caption text-uppercase tracking-wide">MIDI {{ organStore.midiStatus }}</span>
@@ -156,7 +156,7 @@
               <div v-else class="text-grey-7 italic">Waiting for folder selection...</div>
             </div>
 
-            <div class="note-visualizer-container bg-dark-panel rounded-borders shadow-inset q-pa-xl">
+            <div id="note-monitor" class="note-visualizer-container bg-dark-panel rounded-borders shadow-inset q-pa-xl">
               <div class="text-center" v-if="!folderPath && !processingMessage">
                 <q-icon name="queue_music" size="100px" color="grey-9" />
                 <div class="text-h6 text-grey-8 q-mt-md font-cinzel">Select a Tsunami Render folder to start monitoring

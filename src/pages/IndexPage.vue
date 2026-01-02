@@ -9,7 +9,7 @@
           Advanced GrandOrgue & Tsunami Toolset
         </div>
 
-        <q-btn color="amber-9" size="lg" label="Open ODF File" @click="() => organStore.loadOrgan()" icon="folder_open"
+        <q-btn id="btn-open-odf" color="amber-9" size="lg" label="Open ODF File" @click="() => organStore.loadOrgan()" icon="folder_open"
           class="font-cinzel q-px-xl q-py-sm" outline />
 
         <div v-if="organStore.recentFiles.length > 0" class="recent-list q-mt-xl text-left">
@@ -69,7 +69,7 @@
 
           <q-btn flat icon="file_open" round @click="organStore.importFromJSON"><q-tooltip>Open Combination
               File</q-tooltip></q-btn>
-          <q-btn rounded label="Save" color="green" icon="save" @click="organStore.exportToJSON" />
+          <q-btn id="btn-save-json" rounded label="Save" color="green" icon="save" @click="organStore.exportToJSON" />
         </div>
       </div>
 
@@ -78,7 +78,7 @@
 
         <!-- Left: Stops Area (Scrollable) -->
 
-        <q-scroll-area style="height: 100%" class="col q-pa-lg">
+        <q-scroll-area id="stops-container" style="height: 100%" class="col q-pa-lg">
           <div v-for="manual in organStore.organData.manuals" :key="manual.id" class="col-12 q-mb-md">
             <div class="manual-section q-pa-md">
               <div class="manual-name font-cinzel text-h6 text-amber-7 q-mb-lg text-center border-bottom-amber">
@@ -189,7 +189,7 @@
           <div class="q-pa-md bg-dark-sidebar  column">
             <!-- <div class="text-overline text-grey-6" style="line-height: 1">Bank Actions</div> -->
             <div class="row q-gutter-x-sm">
-              <q-btn color="amber" text-color="black" icon-right="add" label="Save to New"
+              <q-btn id="btn-save-new" color="amber" text-color="black" icon-right="add" label="Save to New"
                 class="col font-cinzel text-caption" :disable="organStore.banks.length >= 32" @click="addNewBank">
                 <q-tooltip v-if="organStore.banks.length >= 32">Bank limit reached (32)</q-tooltip>
               </q-btn>
@@ -216,7 +216,7 @@
                 </div>
 
                 <!-- Drive Picker -->
-                <div v-if="!showAdvancedDisk" class="drive-picker q-gutter-y-xs">
+                <div id="target-device-picker" v-if="!showAdvancedDisk" class="drive-picker q-gutter-y-xs">
                   <div v-for="drive in organStore.availableDrives" :key="drive.mountPoint"
                     class="drive-item q-pa-sm rounded-borders cursor-pointer row items-center no-wrap"
                     :class="{ 'drive-selected': organStore.outputDir === drive.mountPoint }"
@@ -258,7 +258,7 @@
 
               <!-- 2. Burn Button -->
               <div class="row q-gutter-x-sm q-gutter-y-sm">
-                <q-btn color="red-10" :label="organStore.isOutputRemovable ? 'Burn to Card' : 'Copy to Folder'"
+                <q-btn id="btn-burn-card" color="red-10" :label="organStore.isOutputRemovable ? 'Burn to Card' : 'Copy to Folder'"
                   class="col font-cinzel q-py-sm shadow-10" :loading="organStore.isRendering"
                   :disable="organStore.banks.length === 0" @click="handleRenderClick"
                   :icon-right="organStore.isOutputRemovable ? 'sd_card' : 'folder'">
@@ -284,7 +284,7 @@
                 <div class="text-caption text-white semi-bold">{{ organStore.isOutputRemovable ? 'Drive Ready' :
                   'Folder Ready' }}
                 </div>
-                <q-btn flat dense color="white" label="Preview" size="sm" class="text-weight-bold"
+                <q-btn id="btn-preview-ready" flat dense color="white" label="Preview" size="sm" class="text-weight-bold"
                   @click="$router.push({ path: '/preview', query: { folder: organStore.outputDir } })" />
               </div>
             </div>
