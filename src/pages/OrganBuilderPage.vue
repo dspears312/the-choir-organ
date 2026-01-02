@@ -8,10 +8,15 @@
                 <div class="text-h4 font-cinzel text-amber-8 text-shadow">{{ organStore.organData?.name }}</div>
 
                 <div class="row items-center q-gutter-x-lg">
+                    <!-- Audio Meter & Master Volume -->
+                    <AudioMeter />
+
+                    <q-separator vertical color="grey-9" />
+
                     <div class="ram-indicator row items-center q-gutter-x-sm" v-if="ramUsage > 0">
                         <q-icon name="memory" :style="{ color: ramColor }" size="16px" />
                         <span class="text-caption font-cinzel" :style="{ color: ramColor }">RAM: {{ formattedRam
-                        }}</span>
+                            }}</span>
                         <q-tooltip class="bg-grey-10 text-white shadow-4">
                             App Memory Usage: {{ formattedRam }}
                         </q-tooltip>
@@ -409,6 +414,7 @@ import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useOrganStore } from 'src/stores/organ';
 import Drawknob from 'src/components/Drawknob.vue';
+import AudioMeter from 'src/components/AudioMeter.vue';
 import { parseStopLabel } from 'src/utils/label-parser';
 
 const organStore = useOrganStore();

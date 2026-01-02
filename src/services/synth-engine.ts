@@ -33,6 +33,7 @@ export class SynthEngine {
     private activeVoices: Voice[] = [];
     private requestedNotes: Set<string> = new Set(); // Tracks held keys (note-stopId key)
     private masterGain: GainNode;
+    public analyser: AnalyserNode;
     private isTsunamiMode = false;
     private useReleaseSamples = false;
     private globalGainDb = 0;
@@ -40,8 +41,16 @@ export class SynthEngine {
     constructor() {
         this.context = new (window.AudioContext || (window as any).webkitAudioContext)();
         this.masterGain = this.context.createGain();
+
+        this.analyser = this.context.createAnalyser();
+        this.analyser.fftSize = 512;
+        this.analyser.smoothingTimeConstant = 0.8;
+
         this.updateMasterGain();
-        this.masterGain.connect(this.context.destination);
+
+        // Routing: MasterGain -> Analyser -> Destination
+        this.masterGain.connect(this.analyser);
+        this.analyser.connect(this.context.destination);
     }
 
     private updateMasterGain() {

@@ -224,7 +224,7 @@ export function parseHauptwerk(filePath: string): OrganData {
             wavPath,
             releasePath: relPathStr,
             midiNote,
-            gain: parseFloat(p.u || p.AmplitudeLevelAdjustDecibels || '0'),
+            gain: parseFloat(p.p || p.AmplitudeLevelAdjustDecibels || '0'),
             tuning: 0,
             harmonicNumber,
         });

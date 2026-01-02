@@ -26,6 +26,7 @@ export const useOrganStore = defineStore('organ', {
         organData: null as any,
         currentCombination: [] as string[],
         stopVolumes: {} as Record<string, number>,
+        globalVolume: 100, // 0-100%
         banks: [] as Bank[],
         isRendering: false,
         outputDir: '',
@@ -63,6 +64,14 @@ export const useOrganStore = defineStore('organ', {
         }
     },
     actions: {
+        setGlobalVolume(percent: number) {
+            this.globalVolume = percent;
+            // Convert percent to dB (100% = 0dB, 0% = -inf)
+            // Using a log curve approximation or just standard equation
+            const db = percent > 0 ? 20 * Math.log10(percent / 100) : -100;
+            synth.setGlobalGain(db);
+        },
+
         async loadOrgan(path?: string) {
             this.isRestoring = true;
             let data;
