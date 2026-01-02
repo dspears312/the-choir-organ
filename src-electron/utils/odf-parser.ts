@@ -58,7 +58,7 @@ export interface OrganData {
   sourcePath: string;
 }
 
-const NOISE_KEYWORDS = ['noise', 'tracker', 'blower', 'motor', 'action', 'vental', 'tremulant noise', 'drawknob', 'stop action'];
+export const NOISE_KEYWORDS = ['noise', 'tracker', 'blower', 'motor', 'action', 'vental', 'tremulant noise', 'drawknob', 'stop action', 'special'];
 
 function normalizeId(id: string | number): string {
   if (typeof id === 'number') return id.toString().padStart(3, '0');

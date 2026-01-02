@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url'
 import { setImmediate } from 'timers';
 import { exec } from 'child_process';
 import { parseODF } from './utils/odf-parser';
+import { parseHauptwerk } from './utils/hauptwerk-parser';
 import { renderNote } from './utils/renderer';
 import { readWav } from './utils/wav-reader';
 import { addToRecent, getRecents, saveOrganState, loadOrganState } from './utils/persistence';
@@ -224,7 +225,11 @@ ipcMain.handle('select-odf-file', async (event, specificPath?: string) => {
   if (!filePath) {
     const result = await dialog.showOpenDialog({
       properties: ['openFile'],
-      filters: [{ name: 'GrandOrgue ODF', extensions: ['organ'] }]
+      filters: [
+        { name: 'Organ Definition Files', extensions: ['organ', 'xml', 'Organ_Hauptwerk_xml'] },
+        { name: 'GrandOrgue ODF', extensions: ['organ'] },
+        { name: 'Hauptwerk XML', extensions: ['xml', 'Organ_Hauptwerk_xml'] }
+      ]
     });
     filePath = result.filePaths[0];
   }
@@ -233,7 +238,11 @@ ipcMain.handle('select-odf-file', async (event, specificPath?: string) => {
 
   try {
     addToRecent(filePath);
-    return parseODF(filePath);
+    if (filePath.toLowerCase().endsWith('.xml') || filePath.toLowerCase().includes('_hauptwerk_xml')) {
+      return parseHauptwerk(filePath);
+    } else {
+      return parseODF(filePath);
+    }
   } catch (e: any) {
     console.error(e);
     return { error: e.message };

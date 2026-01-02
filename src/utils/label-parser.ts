@@ -20,8 +20,8 @@ export function parseStopLabel(fullName: string): { name: string; pitch: string 
     }
 
     // Filter out manual-related prefixes: SW, GT, HW, P, PED, PD, PT
-    // Must be at the beginning of the string and followed by a space or word boundary
-    const manualPrefixRegex = /^(?:SW|GT|HW|P|PED|PD|PT|GO)\b\s*/i;
+    // Must be at the beginning of the string and followed by an optional colon and space
+    const manualPrefixRegex = /^(?:SW|GT|HW|P|PED|PD|PT|GO|POS):?\b\s*/i;
     cleanName = cleanName.replace(manualPrefixRegex, '');
 
     // Clean up any double spaces or trailing/leading punctuation that might be left
