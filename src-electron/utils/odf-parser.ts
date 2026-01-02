@@ -304,11 +304,22 @@ export function parseODF(filePath: string): OrganData {
     // Switches on panels
     const numPanelSwitches = parseInt(panel.NumberOfSwitches || '0');
     for (let i = 1; i <= numPanelSwitches; i++) {
-      const psKey = `Panel${panelId}Switch${i.toString().padStart(3, '0')}`;
+      const loopIdxStr = i.toString().padStart(3, '0');
+
+      // 1. Determine the Target Switch ID
+      // Often defined as Switch001=014 in [Panel001]
+      let targetSwitchId = normalizeId(panel[`Switch${loopIdxStr}`] || loopIdxStr);
+
+      // 2. Construct the Section Key
+      // e.g. [Panel001Switch014]
+      const psKey = `Panel${panelId}Switch${targetSwitchId.padStart(3, '0')}`;
       const psData = parsed[psKey];
+
       if (psData) {
-        const switchId = normalizeId(psData.Switch || psData.SwitchID || '001');
+        // Use targetSwitchId as the primary ID
+        const switchId = targetSwitchId;
         const globalSwitch = allSwitches[switchId];
+
         if (globalSwitch) {
           screen.elements.push({
             id: `${panelId}_sw_${switchId}`,

@@ -1,5 +1,9 @@
 <template>
     <div class="organ-screen" :style="screenStyle">
+        <!-- Background Image -->
+        <img v-if="screen.backgroundImage" :src="getImageUrl(screen.backgroundImage)" class="organ-bg"
+            draggable="false" />
+
         <!-- All Elements (including backgrounds) -->
         <div v-for="element in screen.elements" :key="element.id" class="organ-element" :style="{
             position: 'absolute',
