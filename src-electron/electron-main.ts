@@ -86,6 +86,7 @@ protocol.registerSchemesAsPrivileged([
 
 
 let mainWindow: BrowserWindow | undefined;
+let workerWindows: BrowserWindow[] = [];
 let isCancellationRequested = false;
 let memoryInterval: NodeJS.Timeout | null = null;
 
@@ -706,6 +707,89 @@ ipcMain.handle('trigger-gc', () => {
   } catch (e: any) {
     console.error('GC failed:', e);
     return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('create-workers', async (event, count: number) => {
+  console.log(`[Main] Creating ${count} worker windows...`);
+
+  // Close existing workers
+  workerWindows.forEach(w => {
+    try { w.close(); } catch (e) {/* ignore */ }
+  });
+  workerWindows = [];
+
+  for (let i = 0; i < count; i++) {
+    const workerWin = new BrowserWindow({
+      show: false, // Keep hidden
+      webPreferences: {
+        contextIsolation: true,
+        autoplayPolicy: 'no-user-gesture-required',
+        preload: path.resolve(
+          currentDir,
+          path.join(process.env.QUASAR_ELECTRON_PRELOAD_FOLDER, 'electron-preload' + process.env.QUASAR_ELECTRON_PRELOAD_EXTENSION)
+        ),
+      }
+    });
+
+    if (process.env.DEV) {
+      // In dev mode, we access localhost
+      await workerWin.loadURL(`${process.env.APP_URL}/#/worker`);
+    } else {
+      // In prod mode, we load the index file with hash
+      await workerWin.loadFile('index.html', { hash: '/worker' });
+    }
+
+    // workerWin.webContents.openDevTools({ mode: 'detach' }); 
+    workerWindows.push(workerWin);
+  }
+
+  return { success: true };
+});
+
+ipcMain.on('send-worker-command', (event, { workerIndex, command }) => {
+  if (workerWindows[workerIndex]) {
+    workerWindows[workerIndex].webContents.send('worker-command', command);
+  }
+});
+
+ipcMain.on('worker-log', (event, msg) => {
+  // Find which worker sent this
+  const index = workerWindows.indexOf(BrowserWindow.fromWebContents(event.sender)!);
+  console.log(`[Worker ${index}] ${msg}`);
+});
+
+ipcMain.on('worker-ready', (event) => {
+  // Find which worker sent this
+  const index = workerWindows.indexOf(BrowserWindow.fromWebContents(event.sender)!);
+  console.log(`[Main] Worker ${index} is ready.`);
+  mainWindow?.webContents.send('worker-ready', index);
+});
+
+ipcMain.on('worker-stats', async (event, stats) => {
+  // Forward stats to main window
+  const wc = event.sender;
+  const index = workerWindows.indexOf(BrowserWindow.fromWebContents(wc)!);
+
+  // Inject Process Memory Info (from Main process side)
+  try {
+    const pid = wc.getOSProcessId();
+    const metrics = app.getAppMetrics();
+    const metric = metrics.find(m => m.pid === pid);
+
+    if (metric) {
+      stats.processMemory = {
+        rss: metric.memory.workingSetSize * 1024, // Approximation of RSS (Electron returns KB)
+        private: (metric.memory.privateBytes || 0) * 1024,
+        shared: ((metric.memory as any).sharedBytes || 0) * 1024
+      };
+    }
+  } catch (e) {
+    console.warn(`[Main] Failed to get memory for worker ${index}`, e);
+  }
+
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('worker-stats', { workerIndex: index, stats });
   }
 });
 

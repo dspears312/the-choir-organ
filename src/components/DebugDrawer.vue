@@ -167,25 +167,40 @@ const treeNodes = computed(() => {
                     children: [
                         { label: `Global Gain: ${data.globalGain || 0}`, key: 'global-gain', icon: 'volume_up' },
                         { label: `Base Path: ${data.basePath}`, key: 'base-path', icon: 'folder' },
+                        { label: `Active Workers: ${organStore.workerCount}`, key: 'worker-count', icon: 'engineering' }
                     ],
                 },
                 {
-                    label: 'Synth Performance',
+                    label: 'Total System Stats',
                     key: 'synth-stats',
                     icon: 'speed',
                     labelClass: 'text-cyan-4 text-weight-bold',
                     children: [
-                        { label: `Active Stops: ${synthStats.value.activeStops}`, key: 'stat-stops', icon: 'adjust' },
-                        { label: `Partial Buffers: ${synthStats.value.partialSamples}`, key: 'stat-partial', icon: 'content_cut' },
-                        { label: `Full Buffers: ${synthStats.value.fullSamples}`, key: 'stat-full', icon: 'all_inclusive' },
-                        { label: `RAM Estimate: ${formatBytes(synthStats.value.totalRamEstimateBytes)}`, key: 'stat-ram', icon: 'memory', labelClass: 'text-amber-5' },
-                        { label: `Active Voices: ${synthStats.value.activeVoices}`, key: 'stat-voices', icon: 'people' },
-                        { label: `Background Tasks: ${synthStats.value.loadingTasks}`, key: 'stat-tasks', icon: 'downloading' },
+                        { label: `Total RAM: ${formatBytes(organStore.totalRamUsage)}`, key: 'total-ram', icon: 'memory', labelClass: 'text-amber-5' },
+                        // Display breakdown per worker
+                        ...Array.from({ length: organStore.workerCount }).map((_, i) => {
+                            const ws = organStore.workerStats[i] || {};
+                            return {
+                                label: `Worker ${i}`,
+                                key: `worker-${i}`,
+                                icon: 'dns',
+                                children: [
+                                    { label: `Active Voices: ${ws.activeVoices || 0}`, key: `w${i}-voices`, icon: 'graphic_eq' },
+                                    { label: `Loaded Stops: ${ws.loadedStopsCount || 0}`, key: `w${i}-stops`, icon: 'album' },
+                                    {
+                                        label: `RAM: ${formatBytes(ws.processMemory?.rss || 0)} (Samples: ${formatBytes(ws.totalRamEstimateBytes || 0)})`,
+                                        key: `w${i}-ram`,
+                                        icon: 'memory'
+                                    },
+                                    { label: `Tasks: ${ws.loadingTasks || 0}`, key: `w${i}-tasks`, icon: 'downloading' }
+                                ]
+                            };
+                        })
                     ]
                 },
                 ...manualNodes,
             ],
-        },
+        }
     ];
 });
 

@@ -10,6 +10,10 @@ const routes: RouteRecordRaw[] = [
       { path: 'preview', component: () => import('pages/TsunamiPreviewPage.vue') }
     ],
   },
+  {
+    path: '/worker',
+    component: () => import('pages/WorkerPage.vue')
+  },
 
   // Always leave this as last one,
   // but you can also remove it

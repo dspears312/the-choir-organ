@@ -91,6 +91,34 @@ contextBridge.exposeInMainWorld('myApi', {
         const listener = (_event: any, bytes: number) => callback(bytes);
         ipcRenderer.on('memory-update', listener);
         return () => ipcRenderer.removeListener('memory-update', listener);
-    }
+    },
 
+    // Worker IPC
+    createWorkers: (count: number) => ipcRenderer.invoke('create-workers', count),
+    onWorkerInit: (callback: (event: any) => void) => {
+        const listener = (event: any) => callback(event);
+        ipcRenderer.on('worker-init', listener);
+        return () => ipcRenderer.removeListener('worker-init', listener);
+    },
+    onWorkerCommand: (callback: (command: any) => void) => {
+        const listener = (_event: any, command: any) => callback(command);
+        ipcRenderer.on('worker-command', listener);
+        return () => ipcRenderer.removeListener('worker-command', listener);
+    },
+    sendWorkerCommand: (workerIndex: number, command: any) => ipcRenderer.send('send-worker-command', { workerIndex, command }),
+    logToMain: (msg: string) => ipcRenderer.send('worker-log', msg),
+    notifyWorkerReady: () => ipcRenderer.send('worker-ready'),
+    onWorkerReady: (callback: (workerIndex: number) => void) => {
+        const listener = (_event: any, workerIndex: number) => callback(workerIndex);
+        ipcRenderer.on('worker-ready', listener);
+        return () => ipcRenderer.removeListener('worker-ready', listener);
+    },
+
+    sendWorkerStats: (stats: any) => ipcRenderer.send('worker-stats', stats),
+    onWorkerStats: (callback: (event: any, stats: any) => void) => {
+        const listener = (event: any, stats: any) => callback(event, stats);
+        ipcRenderer.on('worker-stats', listener);
+        return () => ipcRenderer.removeListener('worker-stats', listener);
+    },
+    getProcessMemoryUsage: () => Promise.resolve(process.memoryUsage())
 });

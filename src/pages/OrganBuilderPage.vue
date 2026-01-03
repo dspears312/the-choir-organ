@@ -35,14 +35,7 @@
 
                     <q-separator vertical color="grey-9" />
 
-                    <div class="ram-indicator row items-center q-gutter-x-sm" v-if="ramUsage > 0">
-                        <q-icon name="memory" :style="{ color: ramColor }" size="16px" />
-                        <span class="text-caption font-cinzel" :style="{ color: ramColor }">RAM: {{ formattedRam
-                            }}</span>
-                        <q-tooltip class="bg-grey-10 text-white shadow-4">
-                            App Memory Usage: {{ formattedRam }}
-                        </q-tooltip>
-                    </div>
+
 
                     <div class="status-indicator row items-center q-gutter-x-sm cursor-pointer hover-opacity-100"
                         @click="organStore.initMIDI" :class="{ 'opacity-50': organStore.midiStatus !== 'Connected' }">
@@ -72,6 +65,13 @@
                             File</q-tooltip></q-btn>
                     <q-btn id="btn-save-json" rounded label="Save" color="green" icon="save"
                         @click="organStore.exportToJSON" />
+
+                    <q-btn flat round icon="bug_report" color="grey-6" @click="debugStore.open()">
+                        <q-tooltip>Debug Inspector</q-tooltip>
+                    </q-btn>
+                    <q-btn flat round icon="settings" color="grey-6" @click="showAudioSettings = true">
+                        <q-tooltip>Audio Settings</q-tooltip>
+                    </q-btn>
                 </div>
             </div>
 
@@ -583,6 +583,36 @@
             </q-card>
         </q-dialog>
 
+        <!-- Audio Settings Dialog -->
+        <q-dialog v-model="showAudioSettings">
+            <q-card dark style="min-width: 400px; background: #1a1a1a; border: 1px solid #444;" class="q-pa-md">
+                <q-card-section>
+                    <div class="text-h6 font-cinzel text-amber">Audio Settings</div>
+                </q-card-section>
+
+                <q-card-section class="q-pt-none">
+                    <div class="text-subtitle2 text-grey-4">Local Worker Processes</div>
+                    <div class="text-caption text-grey-6 q-mb-md">
+                        Distribute audio synthesis across multiple processes to improve performance on multi-core CPUs.
+                    </div>
+
+                    <div class="row items-center q-gutter-x-md">
+                        <q-slider v-model="pendingWorkerCount" :min="1" :max="8" :step="1" label markers snap
+                            color="amber" track-color="grey-8" class="col" @change="applyAudioSettings" />
+                        <div class="text-h6 text-amber font-cinzel">{{ pendingWorkerCount }}</div>
+                    </div>
+
+                    <div class="text-caption text-grey-5 q-mt-sm">
+                        <span>Use {{ pendingWorkerCount }} background processes. Recommended: 2-4.</span>
+                    </div>
+                </q-card-section>
+
+                <q-card-actions align="right">
+                    <q-btn flat label="Close" color="grey-6" v-close-popup />
+                </q-card-actions>
+            </q-card>
+        </q-dialog>
+
     </q-page>
 </template>
 
@@ -590,6 +620,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { useOrganStore } from 'src/stores/organ';
+import { useDebugStore } from 'src/stores/debug';
 import Drawknob from 'src/components/Drawknob.vue';
 import OrganScreen from 'src/components/OrganScreen.vue';
 import AudioMeter from 'src/components/AudioMeter.vue';
@@ -599,6 +630,7 @@ import { useQuasar } from 'quasar';
 const $q = useQuasar();
 
 const organStore = useOrganStore();
+const debugStore = useDebugStore();
 const router = useRouter();
 const route = useRoute();
 const selectedBank = ref(-1);
@@ -615,6 +647,36 @@ const showProgressDialog = ref(false);
 const showDiskWarning = ref(false);
 const showFormatDialog = ref(false);
 const showAdvancedDisk = ref(false);
+
+// Audio Settings
+const showAudioSettings = ref(false);
+const pendingWorkerCount = ref(1);
+
+// Initialize pending count from store
+watch(() => organStore.workerCount, (val) => {
+    pendingWorkerCount.value = val || 1;
+}, { immediate: true });
+
+async function applyAudioSettings() {
+    try {
+        if (pendingWorkerCount.value === organStore.workerCount) return;
+
+        $q.loading.show({ message: 'Reconfiguring Audio Engine...' });
+        await organStore.configureAudioEngine(pendingWorkerCount.value);
+        $q.notify({
+            color: 'positive',
+            message: `Audio engine reconfigured with ${pendingWorkerCount.value} worker processes.`
+        });
+    } catch (e: any) {
+        console.error(e);
+        $q.notify({
+            color: 'negative',
+            message: 'Failed to configure audio engine: ' + e.message
+        });
+    } finally {
+        $q.loading.hide();
+    }
+}
 
 function toggleRecording() {
     if (organStore.isRecording) {

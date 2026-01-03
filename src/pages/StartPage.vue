@@ -84,7 +84,7 @@
             <div v-if="organStore.recentFiles.length === 0" class="first-time-container column items-center">
                 <q-icon name="piano" size="120px" class="text-amber-8 q-mb-lg" />
                 <div class="text-h2 font-cinzel text-amber-9 q-mb-xl text-center">The Choir Organ</div>
-                <q-btn id="btn-open-odf-prominent" color="amber-9" size="xl" label="Open Organ"
+                <q-btn id="btn-open-odf-prominent" color="amber-9" size="xl" label="Install Organ"
                     @click="() => organStore.loadOrgan()" icon="folder_open" class="font-cinzel q-px-xl q-py-md"
                     outline />
                 <div class="q-mt-xl text-center">
@@ -130,7 +130,7 @@
                     </q-list>
 
                     <div class="row q-mt-xl justify-center q-gutter-md">
-                        <q-btn color="amber-9" outline label="Open Organ" icon="folder_open"
+                        <q-btn color="amber-9" outline label="Install Organ" icon="folder_open"
                             @click="() => organStore.loadOrgan()" class="font-cinzel" />
                         <q-btn flat color="grey-6" label="Preview SD card" @click="$router.push('/preview')"
                             class="font-cinzel" icon="sd_card" />

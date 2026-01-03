@@ -675,7 +675,8 @@ export class SynthEngine {
             fullSamples: 0,
             totalRamEstimateBytes: 0,
             activeVoices: this.activeVoices.length,
-            loadingTasks: Object.keys(this.loadingTasks).length
+            loadingTasks: Object.keys(this.loadingTasks).length,
+            loadedStopsCount: new Set(Object.keys(this.buffers).map(k => k.split('-')[0])).size
         };
 
         Object.values(this.buffers).forEach(sample => {

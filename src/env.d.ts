@@ -45,6 +45,19 @@ export interface IElectronAPI {
   checkForUpdates: () => Promise<any>;
   downloadUpdate: () => Promise<any>;
   quitAndInstall: () => Promise<any>;
+
+  // Worker IPC
+  createWorkers: (count: number) => Promise<void>;
+  sendWorkerCommand: (workerIndex: number, command: any) => void;
+  onWorkerInit: (callback: (event: any) => void) => () => void;
+  onWorkerCommand: (callback: (command: any) => void) => () => void;
+  onRemoteClearCombination: (callback: (event: any) => void) => () => void;
+  sendWorkerStats: (stats: any) => void;
+  onWorkerStats: (callback: (event: any, stats: any) => void) => () => void;
+  getProcessMemoryUsage: () => Promise<any>;
+  logToMain: (msg: string) => void;
+  notifyWorkerReady: () => void;
+  onWorkerReady: (callback: (workerIndex: number) => void) => () => void;
 }
 
 declare global {

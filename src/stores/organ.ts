@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia';
 import { markRaw } from 'vue';
-import { synth } from '../services/synth-engine';
+import { synthClient as synth } from '../services/synth-client';
 
 export interface Bank {
     id: string; // unique ID for reordering
@@ -80,9 +80,22 @@ export const useOrganStore = defineStore('organ', {
             port: 8080,
             ips: [] as string[]
         },
-        remoteSyncCleanup: null as (() => void) | null
+        remoteSyncCleanup: null as (() => void) | null,
+
+        // Multi-Process
+        // Multi-Process
+        workerCount: 0,
+        workerStats: {} as Record<number, any>
     }),
     getters: {
+        totalRamUsage: (state) => {
+            let total = 0;
+            // Add worker stats (Process RSS)
+            Object.values(state.workerStats).forEach((s: any) => {
+                total += s.processMemory?.rss || s.totalRamEstimateBytes || 0;
+            });
+            return total;
+        },
         targetVolumeLabel: (state) => {
             if (state.organData?.name) {
                 const label = state.organData.name
@@ -144,6 +157,11 @@ export const useOrganStore = defineStore('organ', {
 
                 // Initialize global gain
                 synth.setGlobalGain(data.globalGain || 0);
+
+                // Initialize Audio Engine with persisted worker count (min 1)
+                const savedWorkerCount = parseInt(localStorage.getItem('tco-worker-count') || '1', 10);
+                const initialWorkers = Math.max(1, savedWorkerCount);
+                await this.configureAudioEngine(initialWorkers);
 
                 // Initialize volumes from ODF defaults first
                 Object.keys(data.stops).forEach(id => {
@@ -264,6 +282,21 @@ export const useOrganStore = defineStore('organ', {
             synth.setUseReleaseSamples(enabled);
         },
 
+        async configureAudioEngine(workerCount: number) {
+            this.workerCount = workerCount;
+            localStorage.setItem('tco-worker-count', workerCount.toString());
+
+            // Re-initialize synth client
+            await synth.init(workerCount);
+
+            // Sync state to new workers
+            synth.setGlobalGain(this.globalVolume > 0 ? 20 * Math.log10(this.globalVolume / 100) : -100);
+            synth.setUseReleaseSamples(this.useReleaseSamples);
+            synth.setTsunamiMode(this.isTsunamiMode);
+
+            // Note: SynthClient now waits for readiness, so we are safe here.
+        },
+
         async preloadStopSamples(stopId: string) {
             // No-op in on-demand mode.
         },
@@ -319,6 +352,11 @@ export const useOrganStore = defineStore('organ', {
                 clearCleanup();
             };
             this.refreshRemoteStatus();
+
+            // Initialize Worker Stats Listener
+            window.myApi.onWorkerStats((event: any, payload: { workerIndex: number, stats: any }) => {
+                this.workerStats[payload.workerIndex] = payload.stats;
+            });
         },
 
         async setRemoteServerState(running: boolean) {
