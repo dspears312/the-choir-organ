@@ -35,3 +35,6 @@ yarn-error.log*
 # Temporary organ definition files for agentic parsing
 *.organ
 *.Organ_Hauptwerk_xml
+
+# Remote build artifacts
+src-electron/remote/dist
