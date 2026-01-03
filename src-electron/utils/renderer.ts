@@ -269,9 +269,10 @@ export async function renderPerformance(
                                 }
                                 const finalScale = stopVolumeScale * odfGainLinear * globalGainLinear * pedalScale * FIXED_ATTENUATION;
 
-                                // Mix Sustain
-                                const sustainFade = renderTails ? 0.020 : 0.2;
-                                const sustainDuration = durationMs + (sustainFade * 1000);
+                                // Mix Sustain and Release with simultaneous crossfade
+                                // We ensure the Release starts fading IN exactly when the Sustain starts fading OUT.
+                                const crossfadeS = renderTails ? 0.05 : 0.2; // 50ms crossfade for tails
+                                const sustainDuration = durationMs + (crossfadeS * 1000);
 
                                 const tremulantsForPipe = activeTremulants.filter(t => !t.manualId || String(t.manualId) === String(rp.manualId)); // activeTremulants is global to organData for now
 
@@ -284,7 +285,7 @@ export async function renderPerformance(
                                     playbackRate,
                                     tremulantsForPipe,
                                     rp.delay || 0,
-                                    sustainFade,
+                                    crossfadeS,
                                     0 // No fade in for sustain (attack is natural)
                                 );
 
@@ -297,17 +298,20 @@ export async function renderPerformance(
                                     }
 
                                     if (relInfo && relInfo.data) {
+                                        // To ensure no gap, we start the release exactly at NoteOff (durationMs)
+                                        // The Release Fades IN over 'crossfadeS`.
+                                        // The Sustain Fades OUT over 'crossfadeS' starting at 'durationMs'.
                                         mixSample(
                                             outputBuffer,
                                             relInfo,
-                                            shiftedStart + durationMs, // Start at shifted NoteOff
+                                            shiftedStart + durationMs,
                                             null, // Play full release
                                             finalScale,
                                             playbackRate, // Same pitch
                                             tremulantsForPipe,
                                             0, // Delay
                                             0.0, // No fade out for release
-                                            0.020 // Fade IN for release (crossfade)
+                                            crossfadeS // Fade IN for release, simultaneous with sustain fade out
                                         );
                                     }
                                 }

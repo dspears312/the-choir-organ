@@ -91,9 +91,8 @@
                         style="background: transparent;">
                         <!-- Basic Grid View -->
                         <q-tab-panel name="basic" class="q-pa-none overflow-hidden">
-                            <q-scroll-area id="stops-container" style="height: 100%" class="col q-pa-lg">
-                                <div v-for="manual in organStore.organData?.manuals" :key="manual.id"
-                                    class="col-12 q-mb-md">
+                            <q-scroll-area id="stops-container" style="height: 100%" class="col q-pa-md">
+                                <div v-for="manual in sortedManuals" :key="manual.id" class="col-12 q-mb-md">
                                     <div class="manual-section q-pa-md">
                                         <div
                                             class="manual-name font-cinzel text-h6 text-amber-7 q-mb-lg text-center border-bottom-amber">
@@ -104,6 +103,7 @@
                                                 <Drawknob v-if="organStore.organData?.stops[stopId]"
                                                     :name="parseStopLabel(organStore.organData.stops[stopId].name).name"
                                                     :pitch="parseStopLabel(organStore.organData.stops[stopId].name).pitch"
+                                                    :classification="parseStopLabel(organStore.organData.stops[stopId].name).classification"
                                                     :active="organStore.currentCombination.includes(stopId)"
                                                     :volume="organStore.stopVolumes[stopId] || 100"
                                                     @toggle="organStore.toggleStop(stopId)"
@@ -122,6 +122,7 @@
 
                                                 <Drawknob v-for="vs in getVirtualStopsFor(stopId)" :key="vs.id"
                                                     :name="vs.name" :pitch="vs.pitch"
+                                                    :classification="parseStopLabel(vs.name).classification"
                                                     :active="organStore.currentCombination.includes(vs.id)"
                                                     :volume="organStore.stopVolumes[vs.id] || 100" :is-virtual="true"
                                                     @toggle="organStore.toggleStop(vs.id)"
@@ -659,6 +660,25 @@ onMounted(() => {
     });
 });
 
+
+
+const sortedManuals = computed(() => {
+    if (!organStore.organData?.manuals) return [];
+
+    return [...organStore.organData.manuals].sort((a: any, b: any) => {
+        const isPedalA = isPedal(a.name);
+        const isPedalB = isPedal(b.name);
+
+        if (isPedalA && !isPedalB) return 1;
+        if (!isPedalA && isPedalB) return -1;
+        return 0;
+    });
+});
+
+function isPedal(name: string) {
+    const n = name.toLowerCase();
+    return n.includes('pedal') || n.includes('pedale') || n.includes('pedaal') || n.startsWith('ped') || n === 'p';
+}
 
 const filteredScreens = computed(() => {
     return organStore.organData?.screens.filter(screen => {

@@ -129,6 +129,7 @@ export const useOrganStore = defineStore('organ', {
                 this.currentCombination = [];
                 this.stopVolumes = {};
                 this.virtualStops = []; // Isolation Fix: clear virtual stops when loading new organ
+                this.recordings = []; // Isolation Fix: clear recordings when loading new organ
 
                 // Initialize global gain
                 synth.setGlobalGain(data.globalGain || 0);
