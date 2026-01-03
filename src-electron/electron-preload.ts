@@ -3,6 +3,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 contextBridge.exposeInMainWorld('myApi', {
     selectOdfFile: (path?: string) => ipcRenderer.invoke('select-odf-file', path),
     renderBank: (args: any) => ipcRenderer.invoke('render-bank', args),
+    renderPerformance: (recording: any, organData: any, renderTails: boolean) => ipcRenderer.invoke('render-performance', { recording, organData, renderTails }),
     cancelRendering: () => ipcRenderer.invoke('cancel-rendering'),
     readTextFile: (path: string) => ipcRenderer.invoke('read-text-file', path),
     readFileAsArrayBuffer: (path: string) => ipcRenderer.invoke('read-file-arraybuffer', path),
@@ -10,9 +11,21 @@ contextBridge.exposeInMainWorld('myApi', {
     getWavInfo: (path: string) => ipcRenderer.invoke('get-wav-info', path),
     getWavSamples: (path: string, maxSamples?: number) => ipcRenderer.invoke('get-wav-samples', path, maxSamples),
     getRecentFiles: () => ipcRenderer.invoke('get-recent-files'),
-    onRenderProgress: (callback: (event: any, progress: number) => void) => ipcRenderer.on('render-progress', callback),
-    onExtractionProgress: (callback: (event: any, data: { progress: number, file: string }) => void) => ipcRenderer.on('extraction-progress', callback),
-    onExtractionStart: (callback: (event: any) => void) => ipcRenderer.on('extraction-start', callback),
+    onRenderProgress: (callback: (event: any, progress: number) => void) => {
+        const listener = (event: any, progress: number) => callback(event, progress);
+        ipcRenderer.on('render-progress', listener);
+        return () => ipcRenderer.removeListener('render-progress', listener);
+    },
+    onExtractionProgress: (callback: (event: any, data: { progress: number, file: string }) => void) => {
+        const listener = (event: any, data: any) => callback(event, data);
+        ipcRenderer.on('extraction-progress', listener);
+        return () => ipcRenderer.removeListener('extraction-progress', listener);
+    },
+    onExtractionStart: (callback: (event: any) => void) => {
+        const listener = (event: any) => callback(event);
+        ipcRenderer.on('extraction-start', listener);
+        return () => ipcRenderer.removeListener('extraction-start', listener);
+    },
     listDir: (path: string) => ipcRenderer.invoke('list-dir', path),
     saveOrganState: (odfPath: string, state: any) => ipcRenderer.invoke('save-organ-state', { odfPath, state }),
     loadOrganState: (odfPath: string) => ipcRenderer.invoke('load-organ-state', odfPath),

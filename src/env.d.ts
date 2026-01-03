@@ -19,6 +19,7 @@ export interface IElectronAPI {
   listDir: (path: string) => Promise<string[]>;
   saveOrganState: (odfPath: string, state: any) => Promise<void>;
   loadOrganState: (odfPath: string) => Promise<any>;
+  renderPerformance: (recording: any, organData: any, renderTails: boolean) => Promise<any>;
 }
 
 declare global {

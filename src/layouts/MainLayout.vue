@@ -55,6 +55,10 @@ import { useWalkthroughStore } from 'src/stores/walkthrough';
 import { useOrganStore } from 'src/stores/organ';
 import { useDebugStore } from 'src/stores/debug';
 
+import { Dark } from 'quasar';
+
+Dark.set(true);
+
 const appVersion = ref('');
 const showHelp = ref(false);
 const walkthroughStore = useWalkthroughStore();

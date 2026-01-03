@@ -13,10 +13,32 @@
 
                     <q-separator vertical color="grey-9" />
 
+                    <!-- Recording Controls -->
+                    <div class="row items-center q-gutter-x-sm">
+                        <q-btn round flat dense :color="organStore.isRecording ? 'red' : 'grey-6'"
+                            :icon="organStore.isRecording ? 'stop' : 'fiber_manual_record'"
+                            :class="{ 'animate-blink': organStore.isRecording }" @click="toggleRecording">
+                            <q-tooltip>{{ organStore.isRecording ? 'Stop Recording' : 'Start Recording' }}</q-tooltip>
+                        </q-btn>
+
+                        <div v-if="organStore.isRecording" class="font-cinzel text-red text-caption">
+                            Recording...
+                        </div>
+
+                        <q-btn flat dense icon="list" color="amber"
+                            @click="showRecordingsDrawer = !showRecordingsDrawer">
+                            <q-tooltip>View Recordings</q-tooltip>
+                            <q-badge v-if="organStore.recordings.length > 0" color="red" floating>{{
+                                organStore.recordings.length }}</q-badge>
+                        </q-btn>
+                    </div>
+
+                    <q-separator vertical color="grey-9" />
+
                     <div class="ram-indicator row items-center q-gutter-x-sm" v-if="ramUsage > 0">
                         <q-icon name="memory" :style="{ color: ramColor }" size="16px" />
                         <span class="text-caption font-cinzel" :style="{ color: ramColor }">RAM: {{ formattedRam
-                        }}</span>
+                            }}</span>
                         <q-tooltip class="bg-grey-10 text-white shadow-4">
                             App Memory Usage: {{ formattedRam }}
                         </q-tooltip>
@@ -436,6 +458,108 @@
             </q-card>
         </q-dialog>
 
+        <!-- Recordings Drawer -->
+        <q-drawer v-model="showRecordingsDrawer" side="right" overlay bordered :width="350" class="bg-dark-sidebar"
+            style="display: flex; flex-direction: column;">
+            <div class="column" style="flex: 0 0 auto;">
+                <div class="q-pa-md bg-header-gradient border-bottom-amber row items-center justify-between">
+                    <div class="text-h6 font-cinzel text-amber-9">Recordings</div>
+                    <q-btn flat round dense icon="close" color="grey-6" @click="showRecordingsDrawer = false" />
+                </div>
+
+                <div v-if="isRenderingExport" class="q-pa-md bg-grey-9 q-mb-sm">
+                    <div class="text-caption text-grey-4 q-mb-xs">{{ renderStatus || 'Rendering...' }}</div>
+                    <q-linear-progress stripe size="15px" :value="renderProgress / 100" color="amber-9">
+                        <div class="absolute-full flex flex-center">
+                            <q-badge color="transparent" text-color="black" :label="renderProgress + '%'" />
+                        </div>
+                    </q-linear-progress>
+                </div>
+            </div>
+
+            <q-scroll-area class="col" style="flex: 1 1 auto;">
+                <q-list dark separator>
+                    <q-item v-if="organStore.recordings.length === 0" class="text-grey-6 text-center italic q-pa-lg">
+                        No recordings available.
+                    </q-item>
+
+                    <q-item v-for="rec in organStore.recordings" :key="rec.id" class="q-py-md">
+                        <q-item-section>
+                            <q-item-label class="text-amber-1 font-cinzel text-weight-bold">
+                                {{ rec.name }}
+                                <q-popup-edit v-model="rec.name" auto-save v-slot="scope" class="bg-grey-10 text-amber">
+                                    <q-input v-model="scope.value" dense autofocus @keyup.enter="scope.set" dark
+                                        color="amber" />
+                                </q-popup-edit>
+                                <q-icon name="edit" size="xs" color="grey-8"
+                                    class="q-ml-sm cursor-pointer opacity-50 hover-opacity-100" />
+                            </q-item-label>
+                            <q-item-label caption class="text-grey-5">
+                                {{ new Date(rec.date).toLocaleString() }}
+                            </q-item-label>
+                            <q-item-label caption class="text-grey-6">
+                                {{ (rec.duration / 1000).toFixed(1) }}s • {{ rec.events.length }} events
+                            </q-item-label>
+                        </q-item-section>
+
+                        <q-item-section side>
+                            <div class="row q-gutter-x-xs">
+                                <q-btn flat round dense icon="download" color="green-5"
+                                    @click="initRenderRecording(rec)">
+                                    <q-tooltip>Render to WAV</q-tooltip>
+                                </q-btn>
+                                <q-btn flat round dense icon="delete" color="red-9"
+                                    @click="organStore.deleteRecording(rec.id)">
+                                    <q-tooltip>Delete</q-tooltip>
+                                </q-btn>
+                            </div>
+                        </q-item-section>
+                    </q-item>
+                </q-list>
+            </q-scroll-area>
+        </q-drawer>
+
+        <!-- Render Options Dialog -->
+        <q-dialog v-model="showRenderOptions" persistent>
+            <q-card dark style="min-width: 400px; background: #1a1a1a; border: 1px solid #444;" class="q-pa-md">
+                <q-card-section>
+                    <div class="text-h6 font-cinzel text-amber">Render Recording</div>
+                    <div class="text-caption text-grey-5 q-mb-md">Choose rendering mode for "{{ selectedRecording?.name
+                    }}"
+                    </div>
+
+                    <q-list dark>
+                        <q-item tag="label" v-ripple class="bg-grey-9 rounded-borders q-mb-sm">
+                            <q-item-section avatar>
+                                <q-radio v-model="renderMode" val="tsunami" color="amber" />
+                            </q-item-section>
+                            <q-item-section>
+                                <q-item-label>Standard (Tsunami Mode)</q-item-label>
+                                <q-item-label caption>Fast decay (50ms fade out). Best for hardware/sampler
+                                    use.</q-item-label>
+                            </q-item-section>
+                        </q-item>
+
+                        <q-item tag="label" v-ripple class="bg-grey-9 rounded-borders">
+                            <q-item-section avatar>
+                                <q-radio v-model="renderMode" val="tails" color="amber" />
+                            </q-item-section>
+                            <q-item-section>
+                                <q-item-label>High Quality (With Tails)</q-item-label>
+                                <q-item-label caption>Full natural release samples. Best for listening.</q-item-label>
+                            </q-item-section>
+                        </q-item>
+                    </q-list>
+                </q-card-section>
+
+                <q-card-actions align="right">
+                    <q-btn flat label="Cancel" color="grey-6" v-close-popup />
+                    <q-btn label="Render to Disk..." color="green" icon="save_alt" @click="confirmRenderRecording"
+                        v-close-popup />
+                </q-card-actions>
+            </q-card>
+        </q-dialog>
+
     </q-page>
 </template>
 
@@ -447,15 +571,94 @@ import Drawknob from 'src/components/Drawknob.vue';
 import OrganScreen from 'src/components/OrganScreen.vue';
 import AudioMeter from 'src/components/AudioMeter.vue';
 import { parseStopLabel } from 'src/utils/label-parser';
+import { useQuasar } from 'quasar';
+
+const $q = useQuasar();
 
 const organStore = useOrganStore();
 const router = useRouter();
 const selectedBank = ref(-1);
 const activeTab = ref('basic');
+const showRecordingsDrawer = ref(false);
+const showRenderOptions = ref(false);
+const selectedRecording = ref<any>(null);
+const renderProgress = ref(0);
+const isRenderingExport = ref(false);
+const renderStatus = ref('');
+const renderMode = ref('tsunami');
+const showProgressDialog = ref(false);
 
 const showDiskWarning = ref(false);
 const showFormatDialog = ref(false);
 const showAdvancedDisk = ref(false);
+
+function toggleRecording() {
+    if (organStore.isRecording) {
+        organStore.stopRecording();
+        showRecordingsDrawer.value = true; // Auto open list
+    } else {
+        organStore.startRecording();
+    }
+}
+
+function initRenderRecording(rec: any) {
+    selectedRecording.value = rec;
+    showRenderOptions.value = true;
+}
+
+async function confirmRenderRecording() {
+    if (!selectedRecording.value) return;
+    const renderTails = renderMode.value === 'tails';
+    // Deep clone to strip Vue Proxies and ensure clean object for IPC
+    const cleanRecording = JSON.parse(JSON.stringify(selectedRecording.value));
+    const cleanOrganData = JSON.parse(JSON.stringify(organStore.organData));
+
+    showProgressDialog.value = true;
+    renderProgress.value = 0;
+
+    try {
+        isRenderingExport.value = true;
+        renderProgress.value = 0;
+        renderStatus.value = 'Initializing...';
+
+        await window.myApi.renderPerformance(cleanRecording, cleanOrganData, renderTails);
+
+        // Success handling is done via the result awaiting, but progress events come separately
+        $q.notify({
+            color: 'positive',
+            message: 'Recording rendered successfully!'
+        });
+    } catch (e: any) {
+        console.error(e);
+        $q.notify({
+            color: 'negative',
+            message: 'Failed to render recording: ' + e.message
+        });
+    } finally {
+        isRenderingExport.value = false;
+        renderProgress.value = 0;
+        renderStatus.value = '';
+    }
+}
+
+onMounted(() => {
+    window.myApi.onRenderProgress((_event, data) => {
+        // data can be just a number (from render-bank) or object (from render-performance)
+        // Check electron-main.ts:
+        // ipcMain: event.sender.send('render-progress', progress); -> number
+        // ipcMain: mainWindow?.webContents.send('render-progress', { status: 'Rendering Performance...', progress: msg.progress }); -> object
+
+        if (typeof data === 'number') {
+            // This is likely from SD card export
+            // We can ignore or handle if we want shared UI
+        } else if (data && typeof data.progress === 'number') {
+            renderProgress.value = data.progress;
+            if (data.status) renderStatus.value = data.status;
+            isRenderingExport.value = true; // Ensure visible if triggered
+        }
+    });
+});
+
 
 const filteredScreens = computed(() => {
     return organStore.organData?.screens.filter(screen => {
@@ -642,6 +845,9 @@ const midiColor = computed(() => {
     return 'grey-7';
 });
 
+
+// Listen for progress
+let progressCleanup: (() => void) | null = null;
 onMounted(() => {
     if (!organStore.organData) {
         router.push('/');
@@ -655,10 +861,19 @@ onMounted(() => {
             ramUsage.value = bytes;
         });
     }
+
+    if (window.myApi?.onRenderProgress) {
+        progressCleanup = window.myApi.onRenderProgress((event: any, data: any) => {
+            // Handle both old format (progress num) and new format ({status, progress})
+            const p = typeof data === 'number' ? data : data.progress;
+            renderProgress.value = Math.round(p);
+        });
+    }
 });
 
 onUnmounted(() => {
     if (ramListenerCleanup) ramListenerCleanup();
+    if (progressCleanup) progressCleanup();
     organStore.stopMIDI();
 
     if (organStore.drivePollInterval) {
@@ -797,5 +1012,23 @@ watch(() => organStore.organData, (newData) => {
 
 .output-destination-area {
     transition: all 0.3s ease;
+}
+
+.animate-blink {
+    animation: blink 1.5s infinite;
+}
+
+@keyframes blink {
+    0% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.3;
+    }
+
+    100% {
+        opacity: 1;
+    }
 }
 </style>

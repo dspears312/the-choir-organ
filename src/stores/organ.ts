@@ -21,6 +21,22 @@ export interface VirtualStop {
     delay?: number; // in ms
 }
 
+export interface TimelineEvent {
+    timestamp: number;
+    type: 'noteOn' | 'noteOff' | 'stopOn' | 'stopOff';
+    note?: number;
+    stopId?: string;
+    velocity?: number;
+}
+
+export interface RecordingSession {
+    id: string;
+    name: string;
+    date: number;
+    duration: number; // ms
+    events: TimelineEvent[];
+}
+
 export const useOrganStore = defineStore('organ', {
     state: () => ({
         organData: null as any,
@@ -49,7 +65,13 @@ export const useOrganStore = defineStore('organ', {
         isExtracting: false,
         extractionProgress: 0,
         extractionFile: '',
-        midiListener: null as ((event: any) => void) | null
+        midiListener: null as ((event: any) => void) | null,
+
+        // Recording State
+        isRecording: false,
+        recordingStartTime: 0,
+        currentRecordingEvents: [] as TimelineEvent[],
+        recordings: [] as RecordingSession[]
     }),
     getters: {
         targetVolumeLabel: (state) => {
@@ -134,6 +156,7 @@ export const useOrganStore = defineStore('organ', {
                         await this.updateDiskInfo();
                     }
                     if (savedState.virtualStops) this.virtualStops = savedState.virtualStops;
+                    if (savedState.recordings) this.recordings = savedState.recordings;
                 }
 
                 // Start drive polling
@@ -173,6 +196,15 @@ export const useOrganStore = defineStore('organ', {
                     .filter(t => !!t);
                 synth.updateTremulants(activeTrems);
             }
+
+            if (this.isRecording) {
+                const timestamp = performance.now() - this.recordingStartTime;
+                this.currentRecordingEvents.push({
+                    timestamp,
+                    type: index === -1 ? 'stopOn' : 'stopOff',
+                    stopId
+                });
+            }
         },
 
         clearCombination() {
@@ -182,6 +214,17 @@ export const useOrganStore = defineStore('organ', {
                     synth.noteOff(note, stopId);
                 });
             });
+
+            if (this.isRecording) {
+                const timestamp = performance.now() - this.recordingStartTime;
+                this.currentCombination.forEach(stopId => {
+                    this.currentRecordingEvents.push({
+                        timestamp,
+                        type: 'stopOff',
+                        stopId
+                    });
+                });
+            }
             this.currentCombination = [];
         },
 
@@ -256,6 +299,14 @@ export const useOrganStore = defineStore('organ', {
 
             if (type === 144 && velocity > 0) { // Note On
                 this.activeMidiNotes.add(note);
+                if (this.isRecording) {
+                    this.currentRecordingEvents.push({
+                        timestamp: performance.now() - this.recordingStartTime,
+                        type: 'noteOn',
+                        note,
+                        velocity
+                    });
+                }
                 if (this.isSynthEnabled) {
                     // Fire all stop playbacks in parallel
                     this.currentCombination.forEach((stopId) => {
@@ -264,6 +315,14 @@ export const useOrganStore = defineStore('organ', {
                 }
             } else if (type === 128 || (type === 144 && velocity === 0)) { // Note Off
                 this.activeMidiNotes.delete(note);
+                if (this.isRecording) {
+                    this.currentRecordingEvents.push({
+                        timestamp: performance.now() - this.recordingStartTime,
+                        type: 'noteOff',
+                        note,
+                        velocity: 0
+                    });
+                }
                 if (this.isSynthEnabled) {
                     this.currentCombination.forEach(stopId => {
                         synth.noteOff(note, stopId);
@@ -438,18 +497,30 @@ export const useOrganStore = defineStore('organ', {
                 if (this.isSynthEnabled) {
                     this.activeMidiNotes.forEach(note => synth.noteOff(note, id));
                 }
+                if (this.isRecording) {
+                    this.currentRecordingEvents.push({
+                        timestamp: performance.now() - this.recordingStartTime,
+                        type: 'stopOff',
+                        stopId: id
+                    });
+                }
             });
 
             contentToTurnOn.forEach(id => {
                 if (!this.currentCombination.includes(id)) {
                     this.currentCombination.push(id);
                     synth.markStopSelected(id);
-                    if (this.isSynthEnabled) {
-                        this.preloadStopSamples(id);
-                        this.activeMidiNotes.forEach(note => this.playPipe(note, id));
-                    }
+                    this.activeMidiNotes.forEach(note => this.playPipe(note, id));
                 }
-            });
+                if (this.isRecording) {
+                    this.currentRecordingEvents.push({
+                        timestamp: performance.now() - this.recordingStartTime,
+                        type: 'stopOn',
+                        stopId: id
+                    });
+                }
+            }
+            );
         },
 
         deleteBank(index: number) {
@@ -619,9 +690,57 @@ export const useOrganStore = defineStore('organ', {
                 stopVolumes: this.stopVolumes,
                 useReleaseSamples: this.useReleaseSamples,
                 outputDir: this.outputDir,
-                virtualStops: this.virtualStops
+                virtualStops: this.virtualStops,
+                recordings: this.recordings
             }));
             await (window as any).myApi.saveOrganState(this.organData.sourcePath, state);
+        },
+
+        startRecording() {
+            this.isRecording = true;
+            this.recordingStartTime = performance.now();
+            this.currentRecordingEvents = [];
+
+            // Capture initial state
+            this.currentCombination.forEach(stopId => {
+                this.currentRecordingEvents.push({
+                    timestamp: 0,
+                    type: 'stopOn',
+                    stopId
+                });
+            });
+        },
+
+        stopRecording() {
+            if (!this.isRecording) return;
+            this.isRecording = false;
+
+            if (this.currentRecordingEvents.length === 0) return;
+
+            const duration = performance.now() - this.recordingStartTime;
+            const newRecording: RecordingSession = {
+                id: crypto.randomUUID(),
+                name: `Recording ${this.recordings.length + 1}`,
+                date: Date.now(),
+                duration: duration,
+                events: [...this.currentRecordingEvents]
+            };
+
+            this.recordings.unshift(newRecording);
+            this.saveInternalState();
+        },
+
+        deleteRecording(id: string) {
+            this.recordings = this.recordings.filter(r => r.id !== id);
+            this.saveInternalState();
+        },
+
+        renameRecording(id: string, newName: string) {
+            const rec = this.recordings.find(r => r.id === id);
+            if (rec) {
+                rec.name = newName;
+                this.saveInternalState();
+            }
         },
 
         exportToJSON() {
