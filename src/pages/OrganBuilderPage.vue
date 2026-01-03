@@ -53,14 +53,6 @@
 
                     <q-separator vertical color="grey-9" />
 
-                    <q-toggle v-model="organStore.useReleaseSamples"
-                        @update:model-value="organStore.setUseReleaseSamples" color="blue-4" label="Release Samples"
-                        dense left-label class="text-caption font-cinzel" />
-
-                    <q-separator vertical color="grey-9" />
-
-
-
                     <q-btn flat icon="file_open" round @click="organStore.importFromJSON"><q-tooltip>Open Combination
                             File</q-tooltip></q-btn>
                     <q-btn id="btn-save-json" rounded label="Save" color="green" icon="save"
@@ -583,35 +575,18 @@
             </q-card>
         </q-dialog>
 
-        <!-- Audio Settings Dialog -->
-        <q-dialog v-model="showAudioSettings">
-            <q-card dark style="min-width: 400px; background: #1a1a1a; border: 1px solid #444;" class="q-pa-md">
-                <q-card-section>
-                    <div class="text-h6 font-cinzel text-amber">Audio Settings</div>
-                </q-card-section>
+        <!-- Shared Audio Settings Dialog -->
+        <SharedAudioSettingsDialog v-model="showAudioSettings" :organ-path="organStore.organData?.sourcePath || ''"
+            @apply="onAudioSettingsApplied" />
 
-                <q-card-section class="q-pt-none">
-                    <div class="text-subtitle2 text-grey-4">Local Worker Processes</div>
-                    <div class="text-caption text-grey-6 q-mb-md">
-                        Distribute audio synthesis across multiple processes to improve performance on multi-core CPUs.
-                    </div>
-
-                    <div class="row items-center q-gutter-x-md">
-                        <q-slider v-model="pendingWorkerCount" :min="1" :max="8" :step="1" label markers snap
-                            color="amber" track-color="grey-8" class="col" @change="applyAudioSettings" />
-                        <div class="text-h6 text-amber font-cinzel">{{ pendingWorkerCount }}</div>
-                    </div>
-
-                    <div class="text-caption text-grey-5 q-mt-sm">
-                        <span>Use {{ pendingWorkerCount }} background processes. Recommended: 2-4.</span>
-                    </div>
-                </q-card-section>
-
-                <q-card-actions align="right">
-                    <q-btn flat label="Close" color="grey-6" v-close-popup />
-                </q-card-actions>
-            </q-card>
-        </q-dialog>
+        <!-- Sample Loading Overlay -->
+        <q-inner-loading :showing="organStore.isLoadingOrgan" dark style="z-index: 2000; background: rgba(0,0,0,0.8);">
+            <q-spinner-gears size="50px" color="amber" />
+            <div class="text-h6 text-amber font-cinzel q-mt-md">Loading Organ...</div>
+            <div class="text-caption text-grey-4 q-mt-sm">{{ organStore.renderStatus }}</div>
+            <q-linear-progress v-if="organStore.extractionProgress > 0" :value="organStore.extractionProgress"
+                color="amber" class="q-mt-md" style="width: 300px" rounded size="6px" />
+        </q-inner-loading>
 
     </q-page>
 </template>
@@ -626,6 +601,7 @@ import OrganScreen from 'src/components/OrganScreen.vue';
 import AudioMeter from 'src/components/AudioMeter.vue';
 import { parseStopLabel } from 'src/utils/label-parser';
 import { useQuasar } from 'quasar';
+import SharedAudioSettingsDialog from 'src/components/SharedAudioSettingsDialog.vue';
 
 const $q = useQuasar();
 
@@ -650,31 +626,42 @@ const showAdvancedDisk = ref(false);
 
 // Audio Settings
 const showAudioSettings = ref(false);
-const pendingWorkerCount = ref(1);
 
-// Initialize pending count from store
-watch(() => organStore.workerCount, (val) => {
-    pendingWorkerCount.value = val || 1;
-}, { immediate: true });
+async function onAudioSettingsApplied(newState: any) {
+    // Reload state from disk or apply directly?
+    // The dialog already saved to disk.
+    // We need to mirror what applyAudioSettings did:
+    // 1. Update store state
+    organStore.audioSettings = newState;
 
-async function applyAudioSettings() {
+    // $q.loading.show({ message: 'Applying Audio Settings...' });
+
     try {
-        if (pendingWorkerCount.value === organStore.workerCount) return;
+        // Reconfigure workers (Store handles this if prompted by workerCount change)
+        // This also grabs the latest workerCount from SettingsStore
+        // Simplified: restart engine
 
-        $q.loading.show({ message: 'Reconfiguring Audio Engine...' });
-        await organStore.configureAudioEngine(pendingWorkerCount.value);
+        // Trigger side effects for audio settings
+        await organStore.setReleaseMode(organStore.audioSettings.releaseMode);
+        await organStore.setLoadingMode(organStore.audioSettings.loadingMode);
+        await organStore.setReverbSettings(organStore.audioSettings.reverbLength, organStore.audioSettings.reverbMix);
+
+        await organStore.saveInternalState();
+
+        await organStore.startOrgan(route.query.file as string);
+
         $q.notify({
             color: 'positive',
-            message: `Audio engine reconfigured with ${pendingWorkerCount.value} worker processes.`
+            message: `Audio settings applied successfully.`
         });
     } catch (e: any) {
         console.error(e);
         $q.notify({
             color: 'negative',
-            message: 'Failed to configure audio engine: ' + e.message
+            message: 'Failed to apply settings: ' + e.message
         });
     } finally {
-        $q.loading.hide();
+
     }
 }
 
@@ -727,30 +714,38 @@ async function confirmRenderRecording() {
     }
 }
 
+let progressCleanup: (() => void) | null = null;
+
 onMounted(async () => {
-    // Check if we need to load an organ from query params
-    const organPath = route.query.organ as string;
-    if (organPath && (!organStore.organData || organStore.organData.sourcePath !== organPath)) {
-        await organStore.loadOrgan(organPath);
+    const organPath = route.query.file as string;
+    if (organPath) {
+        await organStore.startOrgan(organPath);
+    } else {
+        router.push('/');
+        return;
     }
 
+    // Initialize Remote Sync
     organStore.initRemoteSync();
 
-    window.myApi.onRenderProgress((_event, data) => {
-        // data can be just a number (from render-bank) or object (from render-performance)
-        // Check electron-main.ts:
-        // ipcMain: event.sender.send('render-progress', progress); -> number
-        // ipcMain: mainWindow?.webContents.send('render-progress', { status: 'Rendering Performance...', progress: msg.progress }); -> object
+    // Start RAM monitoring
+    if ((window as any).myApi?.onMemoryUpdate) {
+        ramListenerCleanup = (window as any).myApi.onMemoryUpdate((bytes: number) => {
+            ramUsage.value = bytes;
+        });
+    }
 
-        if (typeof data === 'number') {
-            // This is likely from SD card export
-            // We can ignore or handle if we want shared UI
-        } else if (data && typeof data.progress === 'number') {
-            renderProgress.value = data.progress;
-            if (data.status) renderStatus.value = data.status;
-            isRenderingExport.value = true; // Ensure visible if triggered
-        }
-    });
+    // Start Progress monitoring
+    if (window.myApi?.onRenderProgress) {
+        progressCleanup = window.myApi.onRenderProgress((event: any, data: any) => {
+            const p = typeof data === 'number' ? data : data.progress;
+            renderProgress.value = Math.round(p);
+            if (data && typeof data !== 'number' && data.status) {
+                renderStatus.value = data.status;
+                isRenderingExport.value = true;
+            }
+        });
+    }
 });
 
 
@@ -774,7 +769,7 @@ function isPedal(name: string) {
 }
 
 const filteredScreens = computed(() => {
-    return organStore.organData?.screens.filter(screen => {
+    return organStore.organData?.screens.filter((screen: any) => {
         let title = screen.name.toLowerCase();
         if (title.includes('noise')) return false;
         if (title.includes('wind')) return false;
@@ -838,19 +833,8 @@ const vsForm = ref({
 });
 
 function goBack() {
-    organStore.performCleanup();
     router.push('/');
-    // window.location.reload();
 }
-
-function getScreenScalingStyle(screen: any) {
-    // Dynamic scaling to fit reasonable widths if needed
-    // For now we'll just center it, but could add zoom logic here
-    return {
-        // transform: 'scale(0.8)',
-    };
-}
-
 
 function openCreateVirtualStop(stopId: string) {
     const stop = organStore.organData?.stops[stopId];
@@ -901,6 +885,7 @@ function saveVirtualStop() {
     } else {
         organStore.addVirtualStop(vs);
     }
+    showVsDialog.value = false;
 }
 
 function getVirtualStopsFor(stopId: string) {
@@ -958,36 +943,13 @@ const midiColor = computed(() => {
     return 'grey-7';
 });
 
-
-// Listen for progress
-let progressCleanup: (() => void) | null = null;
-onMounted(() => {
-    if (!organStore.organData) {
-        router.push('/');
-        return;
-    }
-    organStore.initMIDI();
-
-    // Start RAM monitoring
-    if ((window as any).myApi?.onMemoryUpdate) {
-        ramListenerCleanup = (window as any).myApi.onMemoryUpdate((bytes: number) => {
-            ramUsage.value = bytes;
-        });
-    }
-
-    if (window.myApi?.onRenderProgress) {
-        progressCleanup = window.myApi.onRenderProgress((event: any, data: any) => {
-            // Handle both old format (progress num) and new format ({status, progress})
-            const p = typeof data === 'number' ? data : data.progress;
-            renderProgress.value = Math.round(p);
-        });
-    }
-});
-
 onUnmounted(() => {
+    console.log('unmount')
+    // Kill engine and workers
+    organStore.stopOrgan();
+
     if (ramListenerCleanup) ramListenerCleanup();
     if (progressCleanup) progressCleanup();
-    organStore.stopMIDI();
 
     if (organStore.drivePollInterval) {
         clearInterval(organStore.drivePollInterval);
@@ -996,9 +958,9 @@ onUnmounted(() => {
 });
 
 watch(
-    () => [organStore.banks, organStore.stopVolumes, organStore.useReleaseSamples, organStore.outputDir, organStore.virtualStops],
+    () => [organStore.banks, organStore.stopVolumes, organStore.useReleaseSamples, organStore.outputDir, organStore.virtualStops, organStore.audioSettings],
     () => {
-        if (organStore.organData && !organStore.isRestoring) {
+        if (organStore.organData) {
             organStore.saveInternalState();
         }
     },

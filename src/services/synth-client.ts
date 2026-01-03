@@ -21,12 +21,8 @@ export class SynthClient {
         this.isDistributed = true;
         this.stopToWorker = {};
 
-        // Initialize workers in main process
-        await window.myApi.createWorkers(workerCount);
-
-        // Wait for workers to report ready
-        console.log(`[SynthClient] Waiting for ${workerCount} workers to be ready...`);
-        await new Promise<void>((resolve) => {
+        // Set up listener BEFORE creating workers to avoid race conditions
+        const readyPromise = new Promise<void>((resolve) => {
             const readySet = new Set<number>();
             const cleanup = window.myApi.onWorkerReady((index: number) => {
                 readySet.add(index);
@@ -44,8 +40,15 @@ export class SynthClient {
                     cleanup();
                     resolve();
                 }
-            }, 5000);
+            }, 10000); // Increased timeout to 10s for stability
         });
+
+        // Initialize workers in main process
+        await window.myApi.createWorkers(workerCount);
+
+        // Wait for workers to report ready
+        console.log(`[SynthClient] Waiting for ${workerCount} workers to be ready...`);
+        await readyPromise;
 
         console.log(`[SynthClient] Initialized ${workerCount} workers`);
     }
@@ -76,9 +79,9 @@ export class SynthClient {
         return worker;
     }
 
-    async loadSample(stopId: string, pipePath: string, type: 'partial' | 'full' = 'partial'): Promise<void> {
+    async loadSample(stopId: string, pipePath: string, type: 'partial' | 'full' = 'partial', params?: { maxDuration?: number, cropToLoop?: boolean }): Promise<void> {
         if (!this.isDistributed) {
-            return synth.loadSample(stopId, pipePath, type);
+            return synth.loadSample(stopId, pipePath, type, params);
         }
 
         const worker = this.getWorkerForStop(stopId);
@@ -86,7 +89,8 @@ export class SynthClient {
             type: 'load-sample',
             stopId,
             pipePath,
-            loadType: type
+            loadType: type,
+            params
         });
     }
 
@@ -106,6 +110,25 @@ export class SynthClient {
         renderingNote?: number,
         delay: number = 0
     ) {
+        // Skip disabled ranks
+        // We need access to the organ store, but SynthClient is a singleton service.
+        // We can import the store here, but we need to use it inside the method or init.
+        // Ideally SynthClient shouldn't depend on Pinia, but for practicality in this architecture:
+
+        // Optimization: For tight loops, we might want to cache the set of disabled stops in SynthClient 
+        // updated via a method call from the store's watcher. But accessing the store directly is easier.
+        // Let's rely on the store being available globally or passed in.
+
+        // Actually, importing the store directly in a service file works in Quasar/Vue3 if Pinia is active.
+        // But circular dependency might be an issue (Store imports Client, Client imports Store).
+        // Better: OrganStore should filter the `stopId` BEFORE calling `synth.noteOn`.
+
+        // HOWEVER, `organ.ts` uses `this.organData.stops[stopId]` often. 
+        // Let's refactor `organ.ts` `playPipe` to check `this.enabledStopIds.has(stopId)`.
+
+        // Wait, the plan said "SynthClient only assigns stops belonging to enabled ranks".
+        // But `noteOn` is per voice.
+
         if (!this.isDistributed) {
             synth.noteOn(note, stopId, pipePath, releasePath, volume, gainDb, tuning, harmonicNumber, isPedal, manualId, activeTremulants, pitchOffsetCents, renderingNote, delay);
             return;
@@ -191,44 +214,36 @@ export class SynthClient {
         }
     }
 
-    setTsunamiMode(enabled: boolean) {
+    setReleaseMode(mode: 'authentic' | 'convolution' | 'none') {
         if (!this.isDistributed) {
-            synth.setTsunamiMode(enabled);
+            synth.setReleaseMode(mode);
             return;
         }
-        // Broadcast
         for (let i = 0; i < this.workerCount; i++) {
             window.myApi.sendWorkerCommand(i, {
-                type: 'set-tsunami-mode',
-                enabled
+                type: 'set-release-mode',
+                mode
             });
         }
     }
 
-    setUseReleaseSamples(enabled: boolean) {
+    configureReverb(length: number, mix: number) {
         if (!this.isDistributed) {
-            synth.setUseReleaseSamples(enabled);
+            synth.configureReverb(length, mix);
             return;
         }
-        // Broadcast
         for (let i = 0; i < this.workerCount; i++) {
             window.myApi.sendWorkerCommand(i, {
-                type: 'set-use-release-samples',
-                enabled
+                type: 'configure-reverb',
+                length,
+                mix
             });
         }
     }
 
-    unloadSamples() {
-        if (!this.isDistributed) {
-            synth.unloadSamples();
-            return;
-        }
-        // Broadcast
-        for (let i = 0; i < this.workerCount; i++) {
-            window.myApi.sendWorkerCommand(i, {
-                type: 'unload-samples'
-            });
+    async unload() {
+        if (this.isDistributed) {
+            await window.myApi.createWorkers(0);
         }
     }
 

@@ -29,13 +29,20 @@ export interface WavInfo {
     data: Float32Array[]; // Mono or Stereo, normalized to -1.0 to 1.0
 }
 
-export function readWav(filePath: string, maxSamples?: number, metadataOnly: boolean = false): WavInfo {
+export interface WavReaderOptions {
+    maxSamples?: number;
+    maxDuration?: number; // seconds
+    cropToLoop?: boolean;
+    metadataOnly?: boolean;
+}
+
+export function readWav(filePath: string, options: WavReaderOptions = {}): WavInfo {
     let fd: number | null = null;
     try {
         fd = fs.openSync(filePath, 'r');
         const stats = fs.statSync(filePath);
 
-        // Basic RIFF Validation
+        // ... (Header parsing logic remains same until data read) ...
         const riffHeader = Buffer.alloc(12);
         fs.readSync(fd, riffHeader, 0, 12, 0);
         if (riffHeader.toString('ascii', 0, 4) !== 'RIFF' || riffHeader.toString('ascii', 8, 12) !== 'WAVE') {
@@ -45,7 +52,6 @@ export function readWav(filePath: string, maxSamples?: number, metadataOnly: boo
         const chunks: Record<string, { offset: number, size: number, buffer?: Buffer }> = {};
         let pos = 12;
 
-        // Fast crawl: only read 8-byte chunk headers
         while (pos + 8 <= stats.size) {
             const header = Buffer.alloc(8);
             fs.readSync(fd, header, 0, 8, pos);
@@ -54,7 +60,6 @@ export function readWav(filePath: string, maxSamples?: number, metadataOnly: boo
 
             chunks[id] = { offset: pos + 8, size };
 
-            // For small metadata chunks, read them into memory now
             if (id === 'fmt ' || id === 'smpl' || id === 'cue ') {
                 const buf = Buffer.alloc(size);
                 fs.readSync(fd, buf, 0, size, pos + 8);
@@ -62,12 +67,11 @@ export function readWav(filePath: string, maxSamples?: number, metadataOnly: boo
             }
 
             pos += 8 + size;
-            if (size % 2 !== 0) pos++; // Chunks are word-aligned
+            if (size % 2 !== 0) pos++;
         }
 
         if (!chunks['fmt ']) throw new Error('Missing fmt chunk');
 
-        // Extract format info
         const fmtBuf = chunks['fmt '].buffer!;
         const audioFormat = fmtBuf.readInt16LE(0);
         const channels = fmtBuf.readInt16LE(2);
@@ -75,33 +79,25 @@ export function readWav(filePath: string, maxSamples?: number, metadataOnly: boo
         const bitsPerSample = fmtBuf.readInt16LE(14);
         const bitDepth = bitsPerSample.toString();
 
-        // Calculate duration based on data chunk size
-        const dataChunk = chunks['data'];
-        let durationSamples = 0;
-        if (dataChunk) {
-            const bytesPerSample = bitsPerSample / 8;
-            durationSamples = dataChunk.size / (channels * bytesPerSample);
-        }
-
-        // Use WaveFile only for high-level chunk parsing (loops/cues) if needed
-        // but we can also parse them manually for speed.
+        // Parse loops early to determine cropping
         const smplBuf = chunks['smpl']?.buffer;
         const loops: WavLoop[] = [];
         let unityNote: number | undefined;
         let pitchFraction: number | undefined;
 
         if (smplBuf) {
-            unityNote = smplBuf.readInt32LE(12); // dwMIDIUnityNote
-            pitchFraction = smplBuf.readInt32LE(16); // dwMIDIPitchFraction
-            const numLoops = smplBuf.readInt32LE(28); // cSampleLoops
+            unityNote = smplBuf.readInt32LE(12);
+            pitchFraction = smplBuf.readInt32LE(16);
+            const numLoops = smplBuf.readInt32LE(28);
             for (let i = 0; i < numLoops; i++) {
-                const loopStart = 36 + (i * 24) + 8; // Offset to dwStart (36 = header size, 24 = loop struct size)
+                const loopStart = 36 + (i * 24) + 8;
                 const start = smplBuf.readInt32LE(loopStart);
                 const end = smplBuf.readInt32LE(loopStart + 4);
                 loops.push({ start, end });
             }
         }
 
+        // Parse Cues
         const cues: WavCue[] = [];
         const cueBuf = chunks['cue ']?.buffer;
         if (cueBuf) {
@@ -109,38 +105,89 @@ export function readWav(filePath: string, maxSamples?: number, metadataOnly: boo
             for (let i = 0; i < numPoints; i++) {
                 const ptOffset = 4 + (i * 24);
                 const id = cueBuf.readInt32LE(ptOffset);
-                const position = cueBuf.readInt32LE(ptOffset + 20); // dwSampleOffset
+                const position = cueBuf.readInt32LE(ptOffset + 20);
                 cues.push({ id, position });
             }
         }
 
+        // Determine max samples to read
+        let limitSamples = Infinity;
+
+        if (options.cropToLoop && loops.length > 0) {
+            // Find the furthest loop end point
+            const maxLoopEnd = Math.max(...loops.map(l => l.end));
+            limitSamples = maxLoopEnd + 1024; // Add a small buffer for crossfading if needed, or just strict end
+        }
+
+        if (options.maxDuration) {
+            const durationLim = Math.floor(options.maxDuration * sampleRate);
+            limitSamples = Math.min(limitSamples, durationLim);
+        }
+
+        if (options.maxSamples) {
+            limitSamples = Math.min(limitSamples, options.maxSamples);
+        }
+
         let normalizedData: Float32Array[] = [];
-        if (!metadataOnly && dataChunk) {
-            // If data is needed, we finally use a full read
-            // For now, to keep it simple and compatible, we'll use fs.readFileSync of the whole file 
-            // and pass to WaveFile for sample extraction, but we could also stream samples.
-            const fullBuffer = fs.readFileSync(filePath);
-            const wav = new WaveFile(fullBuffer);
-            const samples = wav.getSamples(false);
-            const rawData = Array.isArray(samples) ? samples : [samples];
+        let durationSamples = 0;
 
-            normalizedData = rawData.map(channel => {
-                const isFloat = audioFormat === 3;
-                if (isFloat) return channel instanceof Float32Array ? channel : new Float32Array(channel);
+        if (!options.metadataOnly && chunks['data']) {
+            // Read data logic
+            // To support efficient partial reading without loading whole file, we should use fs.readSync with limit
 
-                let divisor = 32768;
-                if (bitsPerSample === 24) divisor = 8388608;
-                else if (bitsPerSample === 32) divisor = 2147483648;
-                else if (bitsPerSample === 8) divisor = 128;
+            const bytesPerSample = bitsPerSample / 8;
+            const dataOffset = chunks['data'].offset;
+            const totalSamplesInFile = chunks['data'].size / (channels * bytesPerSample);
 
-                const finalLength = maxSamples ? Math.min(channel.length, maxSamples) : channel.length;
-                const out = new Float32Array(finalLength);
-                for (let i = 0; i < finalLength; i++) {
-                    out[i] = channel[i] / divisor;
+            const samplesToRead = Math.min(totalSamplesInFile, limitSamples);
+            const bytesToRead = samplesToRead * channels * bytesPerSample;
+
+            // Read specific buffer
+            const rawBuffer = Buffer.alloc(bytesToRead);
+            fs.readSync(fd, rawBuffer, 0, bytesToRead, dataOffset);
+
+            // Use WaveFile to decode this specific chunk? 
+            // WaveFile expects a full WAV. Constructing one is expensive.
+            // Better to manually decode PCM since we have the format info.
+
+            // Manual Decoding
+            normalizedData = [];
+            for (let ch = 0; ch < channels; ch++) normalizedData.push(new Float32Array(samplesToRead));
+
+            let offset = 0;
+            const divisor = bitsPerSample === 24 ? 8388608 : (bitsPerSample === 32 ? 2147483648 : (bitsPerSample === 8 ? 128 : 32768));
+
+            // Helper to read sample
+            const readSample = (offset: number) => {
+                if (bitsPerSample === 16) return rawBuffer.readInt16LE(offset);
+                if (bitsPerSample === 24) return rawBuffer.readIntLE(offset, 3);
+                if (bitsPerSample === 32) return audioFormat === 3 ? rawBuffer.readFloatLE(offset) : rawBuffer.readInt32LE(offset);
+                if (bitsPerSample === 8) return rawBuffer.readUInt8(offset) - 128;
+                return 0;
+            };
+
+            for (let i = 0; i < samplesToRead; i++) {
+                for (let ch = 0; ch < channels; ch++) {
+                    const sample = readSample(offset);
+                    // Normalize
+                    let val = sample;
+                    if (audioFormat !== 3) { // If not float
+                        val = sample / divisor;
+                    }
+                    if (normalizedData[ch]) {
+                        normalizedData[ch][i] = val;
+                    }
+                    offset += bytesPerSample;
                 }
-                return out;
-            });
-            durationSamples = normalizedData[0]?.length || 0;
+            }
+
+            // Update Duration
+            durationSamples = samplesToRead;
+        } else if (chunks['data']) {
+            const bytesPerSample = bitsPerSample / 8;
+            durationSamples = chunks['data'].size / (channels * bytesPerSample);
+        } else {
+            durationSamples = 0;
         }
 
         return {

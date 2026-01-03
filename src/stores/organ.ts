@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia';
 import { markRaw } from 'vue';
 import { synthClient as synth } from '../services/synth-client';
+import { useSettingsStore } from './settings';
 
 export interface Bank {
     id: string; // unique ID for reordering
@@ -29,6 +30,23 @@ export interface TimelineEvent {
     velocity?: number;
 }
 
+// Advanced Audio Settings
+export interface OrganAudioSettings {
+    disabledRanks: string[]; // IDs of disabled ranks
+    releaseMode: 'authentic' | 'convolution' | 'none';
+    reverbMix: number; // 0-1
+    reverbLength: number; // seconds
+    loadingMode: 'none' | 'quick' | 'full';
+}
+
+const DEFAULT_AUDIO_SETTINGS: OrganAudioSettings = {
+    disabledRanks: [],
+    releaseMode: 'authentic',
+    reverbMix: 0.3,
+    reverbLength: 2.0,
+    loadingMode: 'none'
+};
+
 export interface RecordingSession {
     id: string;
     name: string;
@@ -47,13 +65,11 @@ export const useOrganStore = defineStore('organ', {
         isRendering: false,
         outputDir: '',
         midiStatus: 'Disconnected' as 'Disconnected' | 'Connected' | 'Error',
-        isTsunamiMode: false,
         useReleaseSamples: false,
         activeMidiNotes: new Set<number>(),
         recentFiles: [] as string[],
         renderProgress: 0,
         renderStatus: '',
-        isRestoring: false,
         midiAccess: null as MIDIAccess | null,
         midiError: '' as string,
         isSynthEnabled: true,
@@ -83,9 +99,17 @@ export const useOrganStore = defineStore('organ', {
         remoteSyncCleanup: null as (() => void) | null,
 
         // Multi-Process
-        // Multi-Process
         workerCount: 0,
-        workerStats: {} as Record<number, any>
+        workerStats: {} as Record<number, any>,
+
+        // Advanced Audio Settings
+        audioSettings: { ...DEFAULT_AUDIO_SETTINGS } as OrganAudioSettings,
+
+        // Sample Loading Tracking
+        pendingLoadCount: 0,
+        totalPreloadCount: 0,
+        sampleLoadListener: null as (() => void) | null,
+        sampleProgressPollingInterval: null as any
     }),
     getters: {
         totalRamUsage: (state) => {
@@ -98,117 +122,183 @@ export const useOrganStore = defineStore('organ', {
         },
         targetVolumeLabel: (state) => {
             if (state.organData?.name) {
-                const label = state.organData.name
-                    .replace(/[^a-zA-Z0-9]/g, '')
-                    .substring(0, 11)
-                    .toUpperCase();
-                return label || 'TCO';
+                return state.organData.name;
             }
-            return 'TCO';
+            return 'Global';
+        },
+        enabledStopIds: (state) => {
+            if (!state.organData) return new Set<string>();
+            const disabledRanksSet = new Set(state.audioSettings.disabledRanks);
+
+            // Filter stops that have at least one enabled rank
+            return new Set(Object.values(state.organData.stops)
+                .filter(stop => {
+                    // If stop has no ranks (e.g. virtual or strange ODF), keep it enabled? 
+                    // Usually stops have ranks. If no ranks, maybe it's a coupler (couplers usually different type but here stops).
+                    // If rankIds is empty, keep it.
+                    if (stop.rankIds.length === 0) return true;
+                    // Keep stop if AT LEAST ONE rank is NOT disabled.
+                    return stop.rankIds.some(rid => !disabledRanksSet.has(rid));
+                })
+                .map(s => s.id));
         }
     },
     actions: {
         setGlobalVolume(percent: number) {
             this.globalVolume = percent;
-            // Convert percent to dB (100% = 0dB, 0% = -inf)
-            // Using a log curve approximation or just standard equation
             const db = percent > 0 ? 20 * Math.log10(percent / 100) : -100;
             synth.setGlobalGain(db);
         },
 
-        async loadOrgan(path?: string) {
-            this.isRestoring = true;
+        async installOrgan() {
             let data;
-            if (path && typeof path === 'string') {
-                data = await window.myApi.selectOdfFile(path);
+            this.isExtracting = false;
+            this.extractionProgress = 0;
+            this.extractionFile = '';
+
+            const startListener = () => {
+                this.isExtracting = true;
+            };
+            const progressListener = (_event: any, data: any) => {
+                this.extractionProgress = data.progress / 100;
+                this.extractionFile = data.file;
+            };
+
+            window.myApi.onExtractionStart(startListener);
+            window.myApi.onExtractionProgress(progressListener);
+
+            try {
+                data = await window.myApi.selectOdfFile();
                 this.isLoadingOrgan = true;
-            } else {
-                this.isLoadingOrgan = true;
+            } finally {
                 this.isExtracting = false;
-                this.extractionProgress = 0;
-                this.extractionFile = '';
-
-                const startListener = () => {
-                    this.isExtracting = true;
-                };
-                const progressListener = (_event: any, data: any) => {
-                    this.extractionProgress = data.progress / 100;
-                    this.extractionFile = data.file;
-                };
-
-                window.myApi.onExtractionStart(startListener);
-                window.myApi.onExtractionProgress(progressListener);
-
-                try {
-                    data = await window.myApi.selectOdfFile();
-                } finally {
-                    this.isExtracting = false;
-                }
             }
 
             if (data && !data.error) {
-                // Initialize clean state first
-                this.organData = data;
-                this.banks = [];
-                this.currentCombination = [];
-                this.stopVolumes = {};
-                this.virtualStops = []; // Isolation Fix: clear virtual stops when loading new organ
-                this.recordings = []; // Isolation Fix: clear recordings when loading new organ
-
-                // Initialize global gain
-                synth.setGlobalGain(data.globalGain || 0);
-
-                // Initialize Audio Engine with persisted worker count (min 1)
-                const savedWorkerCount = parseInt(localStorage.getItem('tco-worker-count') || '1', 10);
-                const initialWorkers = Math.max(1, savedWorkerCount);
-                await this.configureAudioEngine(initialWorkers);
-
-                // Initialize volumes from ODF defaults first
-                Object.keys(data.stops).forEach(id => {
-                    this.stopVolumes[id] = data.stops[id].volume || 100;
-                });
-
-                // Refresh recents
                 this.fetchRecents();
-
-                // Load internal saved state if exists
-                const savedState = await window.myApi.loadOrganState(this.organData.sourcePath);
-                if (savedState) {
-                    if (savedState.banks) this.banks = savedState.banks;
-                    if (savedState.stopVolumes) {
-                        this.stopVolumes = { ...this.stopVolumes, ...savedState.stopVolumes };
-                    }
-                    if (savedState.useReleaseSamples !== undefined) {
-                        this.setUseReleaseSamples(savedState.useReleaseSamples);
-                    }
-                    if (savedState.outputDir) {
-                        this.outputDir = savedState.outputDir;
-                        await this.updateDiskInfo();
-                    }
-                    if (savedState.virtualStops) this.virtualStops = savedState.virtualStops;
-                    if (savedState.recordings) this.recordings = savedState.recordings;
-                    if (savedState.remoteServerPort) this.remoteServerStatus.port = savedState.remoteServerPort;
-                    if (savedState.isWebServerEnabled) {
-                        console.log('[WebRemote] Auto-starting web server based on saved state');
-                        this.setRemoteServerState(true);
-                    }
-                }
-
-                // Start drive polling
-                this.fetchDrives();
-                if (this.drivePollInterval) clearInterval(this.drivePollInterval);
-                this.drivePollInterval = setInterval(() => this.fetchDrives(), 5000);
             }
-            this.isLoadingOrgan = false;
-            this.syncRemoteState();
-            setTimeout(() => { this.isRestoring = false; }, 100);
         },
 
         async fetchRecents() {
             this.recentFiles = await window.myApi.getRecentFiles();
         },
 
+        async startOrgan(path: string) {
+            if (!path) {
+                console.error('No path specified for startOrgan');
+                return;
+            }
+
+            this.isLoadingOrgan = true;
+            const data = await window.myApi.selectOdfFile(path);
+
+            if (!data || data.error) {
+                console.error('Failed to load ODF file:', data.error);
+                this.isLoadingOrgan = false;
+                return;
+            }
+
+            this.organData = data;
+            this.banks = [];
+            this.currentCombination = [];
+            this.stopVolumes = {};
+            this.virtualStops = [];
+            this.recordings = [];
+
+            // Initialize volumes from ODF defaults first
+            Object.keys(data).forEach(id => {
+                if (id === 'stops') {
+                    Object.keys(data.stops).forEach(stopId => {
+                        this.stopVolumes[stopId] = data.stops[stopId].volume || 100;
+                    });
+                }
+            });
+
+            const sourcePath = this.organData.sourcePath;
+            const organName = this.organData.name;
+            console.log(`[OrganStore] Starting organ: ${organName}`);
+
+            // 1. Cleanup first (Idempotency)
+            // await this.stopOrgan();
+
+            const settingsStore = useSettingsStore();
+            const workerCount = Math.max(1, settingsStore.workerCount);
+            console.log(`[OrganStore] Initializing ${workerCount} workers...`);
+
+            // 2. Refresh workers
+            await synth.init(workerCount);
+
+            // Only load banks and volumes if they are empty or forced (Initial Load)
+            console.log('[OrganStore] Loading state from disk...');
+            const savedState = await window.myApi.loadOrganState(sourcePath);
+            if (savedState) {
+                if (savedState.banks) this.banks = savedState.banks;
+                if (savedState.stopVolumes) {
+                    this.stopVolumes = { ...this.stopVolumes, ...savedState.stopVolumes };
+                }
+                if (savedState.outputDir) {
+                    this.outputDir = savedState.outputDir;
+                    await this.updateDiskInfo();
+                }
+                if (savedState.virtualStops) this.virtualStops = savedState.virtualStops;
+                if (savedState.recordings) this.recordings = savedState.recordings;
+                if (savedState.remoteServerPort) this.remoteServerStatus.port = savedState.remoteServerPort;
+                if (savedState.isWebServerEnabled) {
+                    console.log('[WebRemote] Auto-starting web server based on saved state');
+                    this.setRemoteServerState(true);
+                }
+                if (savedState.audioSettings) {
+                    this.audioSettings = { ...DEFAULT_AUDIO_SETTINGS, ...savedState.audioSettings };
+                }
+            }
+
+            // 4. Sync Settings to Synth engine
+            synth.setGlobalGain(this.globalVolume > 0 ? 20 * Math.log10(this.globalVolume / 100) : -100);
+            synth.setReleaseMode(this.audioSettings.releaseMode);
+            if (this.audioSettings.releaseMode === 'convolution') {
+                synth.configureReverb(this.audioSettings.reverbLength, this.audioSettings.reverbMix);
+            }
+
+            // 5. Start MIDI
+            this.initMIDI();
+
+            // 6. Trigger Preload (if any)
+            if (this.audioSettings.loadingMode !== 'none') {
+                await this.triggerPreload(this.audioSettings.loadingMode);
+            }
+
+            // 7. Start / Refresh drive polling
+            this.fetchDrives();
+            if (this.drivePollInterval) clearInterval(this.drivePollInterval);
+            this.drivePollInterval = setInterval(() => this.fetchDrives(), 5000);
+
+            // If we are still loading (preloading started by startOrgan -> triggerPreload)
+            // polling will handle turning off isLoadingOrgan.
+            this.syncRemoteState();
+
+            this.isLoadingOrgan = false;
+        },
+
+        async stopOrgan() {
+            console.log('[OrganStore] Stopping organ (killing workers)...');
+            this.stopMIDI();
+            await synth.unload();
+
+            // Clear data references to allow GC
+            this.organData = null;
+            this.banks = [];
+            this.currentCombination = [];
+            this.stopVolumes = {};
+            this.virtualStops = [];
+
+            if (this.sampleProgressPollingInterval) {
+                clearInterval(this.sampleProgressPollingInterval);
+                this.sampleProgressPollingInterval = null;
+            }
+        },
+
         toggleStop(stopId: string) {
+            if (!this.organData) return;
             const index = this.currentCombination.indexOf(stopId);
             if (index === -1) {
                 this.currentCombination = [...this.currentCombination, stopId];
@@ -272,33 +362,132 @@ export const useOrganStore = defineStore('organ', {
             this.syncRemoteState();
         },
 
-        setTsunamiMode(enabled: boolean) {
-            this.isTsunamiMode = enabled;
-            synth.setTsunamiMode(enabled);
+        toggleRankDisabled(rankId: string) {
+            const idx = this.audioSettings.disabledRanks.indexOf(rankId);
+            if (idx === -1) {
+                this.audioSettings.disabledRanks.push(rankId);
+            } else {
+                this.audioSettings.disabledRanks.splice(idx, 1);
+            }
         },
 
-        setUseReleaseSamples(enabled: boolean) {
-            this.useReleaseSamples = enabled;
-            synth.setUseReleaseSamples(enabled);
+
+        async setReleaseMode(mode: 'authentic' | 'convolution' | 'none') {
+            this.audioSettings.releaseMode = mode;
+            synth.setReleaseMode(mode);
         },
 
-        async configureAudioEngine(workerCount: number) {
-            this.workerCount = workerCount;
-            localStorage.setItem('tco-worker-count', workerCount.toString());
-
-            // Re-initialize synth client
-            await synth.init(workerCount);
-
-            // Sync state to new workers
-            synth.setGlobalGain(this.globalVolume > 0 ? 20 * Math.log10(this.globalVolume / 100) : -100);
-            synth.setUseReleaseSamples(this.useReleaseSamples);
-            synth.setTsunamiMode(this.isTsunamiMode);
-
-            // Note: SynthClient now waits for readiness, so we are safe here.
+        async setLoadingMode(mode: 'none' | 'quick' | 'full') {
+            this.audioSettings.loadingMode = mode;
         },
 
-        async preloadStopSamples(stopId: string) {
-            // No-op in on-demand mode.
+        async setReverbSettings(length: number, mix: number) {
+            this.audioSettings.reverbLength = length;
+            this.audioSettings.reverbMix = mix;
+            synth.configureReverb(length, mix);
+        },
+
+        setupSampleLoadListener() {
+            if (this.sampleLoadListener) this.sampleLoadListener();
+            this.sampleLoadListener = window.myApi.onSampleLoadedBatch((_event, count) => {
+                if (this.pendingLoadCount > 0) {
+                    this.pendingLoadCount = Math.max(0, this.pendingLoadCount - count);
+                    const loadedCount = this.totalPreloadCount - this.pendingLoadCount;
+
+                    if (this.totalPreloadCount > 0) {
+                        this.extractionProgress = loadedCount / this.totalPreloadCount;
+                    }
+
+                    if (this.pendingLoadCount === 0) {
+                        this.isLoadingOrgan = false;
+                        this.renderStatus = 'Loading complete.';
+                        console.log('[OrganStore] All samples loaded (batched).');
+                        setTimeout(() => {
+                            if (this.renderStatus === 'Loading complete.') this.renderStatus = '';
+                        }, 2000);
+                    }
+                }
+            });
+        },
+
+        async triggerPreload(mode: 'quick' | 'full') {
+            if (!this.organData) return;
+            const stops = this.enabledStopIds; // Set of strings
+            console.log(`[OrganStore] Triggering ${mode} preload for ${stops.size} stops...`);
+
+            this.isLoadingOrgan = true; // Use this to show spinner/progress
+            this.renderStatus = `Preloading samples (${mode})...`;
+            this.extractionProgress = 0;
+
+            // Convert to array for iteration
+            const stopIds = Array.from(stops);
+
+            // 1. Calculate Total Pipes first
+            let totalPipes = 0;
+            const pipesToLoad: { stopId: string, pipe: any, rankId: string, isRelease: boolean }[] = [];
+
+            stopIds.forEach(stopId => {
+                const stop = this.organData.stops[stopId];
+                if (!stop) return;
+                stop.rankIds.forEach((rankId: string) => {
+                    const rank = this.organData.ranks[rankId];
+                    if (!rank) return;
+                    if (this.audioSettings.disabledRanks.includes(rankId)) return;
+                    rank.pipes.forEach((pipe: any) => {
+                        // Main Pipe
+                        pipesToLoad.push({ stopId, pipe, rankId, isRelease: false });
+
+                        // Release Pipe (if Authentic and exists)
+                        if (this.audioSettings.releaseMode === 'authentic' && pipe.releasePath) {
+                            pipesToLoad.push({ stopId, pipe, rankId, isRelease: true });
+                        }
+                    });
+                });
+            });
+
+            this.totalPreloadCount = pipesToLoad.length;
+            this.pendingLoadCount = this.totalPreloadCount;
+            console.log(`[OrganStore] Expecting ${this.totalPreloadCount} samples.`);
+
+            if (this.totalPreloadCount === 0) {
+                this.isLoadingOrgan = false;
+                return;
+            }
+
+            // Reset and Start Listening
+            await (window.myApi as any).resetProgressBuffer();
+            this.setupSampleLoadListener();
+
+            // 2. Dispatch Loads
+            const CHUNK_SIZE = 10; // Pipes per tick
+            for (let i = 0; i < pipesToLoad.length; i += CHUNK_SIZE) {
+                const chunk = pipesToLoad.slice(i, i + CHUNK_SIZE);
+                chunk.forEach(item => {
+                    const path = item.isRelease ? item.pipe.releasePath : item.pipe.wavPath;
+
+                    if (mode === 'quick') {
+                        // Quick mode handles main sample only?
+                        // Actually if we want quick releases? 500ms release?
+                        // Let's assume loading main 1s is enough for quick.
+                        // But if we pushed it to list, we should load it.
+                        // Partial load release too.
+                        synth.loadSample(item.stopId, path, 'partial', { maxDuration: 1.0 });
+                    } else {
+                        const crop = this.audioSettings.releaseMode !== 'authentic';
+                        // If it is a release sample, never crop loop (it has no loop).
+                        // If it is main sample, crop if not authentic.
+                        // Wait, if authentic mode is ON, we load main (full) + release (full/partial?).
+                        // If authentic mode is OFF (Convolution), we load main (cropped).
+
+                        const shouldCrop = !item.isRelease && crop;
+                        synth.loadSample(item.stopId, path, 'full', { cropToLoop: shouldCrop });
+                    }
+                });
+
+                await new Promise(r => setTimeout(r, 10)); // Yield to UI
+            }
+
+            console.log('[OrganStore] Preload requests sent. Waiting for workers...');
         },
 
         initMIDI() {
@@ -497,6 +686,12 @@ export const useOrganStore = defineStore('organ', {
                                 return this.organData.tremulants[tremId];
                             })
                             .filter(trem => trem && (!trem.manualId || String(trem.manualId) === String(manual?.id)));
+
+                        // CHECK IF RANK IS ENABLED
+                        if (this.audioSettings.disabledRanks.includes(rankId)) {
+                            // Skip this pipe
+                            return;
+                        }
 
                         // note is the original key (for release tracking)
                         // adjustedNote is the target pitch base
@@ -820,7 +1015,8 @@ export const useOrganStore = defineStore('organ', {
                 virtualStops: this.virtualStops,
                 recordings: this.recordings,
                 isWebServerEnabled: this.remoteServerStatus.running,
-                remoteServerPort: this.remoteServerStatus.port
+                remoteServerPort: this.remoteServerStatus.port,
+                audioSettings: this.audioSettings
             }));
             await (window as any).myApi.saveOrganState(this.organData.sourcePath, state);
         },
@@ -898,17 +1094,13 @@ export const useOrganStore = defineStore('organ', {
                 const file = e.target.files[0];
                 if (!file) return;
                 const reader = new FileReader();
-                reader.onload = (re: any) => {
+                reader.onload = async (re: any) => {
                     try {
                         const content = JSON.parse(re.target.result);
                         if (content.banks) this.banks = content.banks;
                         if (content.stopVolumes) this.stopVolumes = content.stopVolumes;
                         if (content.currentCombination) {
                             this.currentCombination = content.currentCombination;
-                            this.currentCombination.forEach(id => this.preloadStopSamples(id));
-                        }
-                        if (content.useReleaseSamples !== undefined) {
-                            this.setUseReleaseSamples(content.useReleaseSamples);
                         }
                         if (content.virtualStops) this.virtualStops = content.virtualStops;
                     } catch (err) {
@@ -937,39 +1129,6 @@ export const useOrganStore = defineStore('organ', {
                 return { success: true };
             }
             return { success: false, error: result.error };
-        },
-
-        async performCleanup() {
-            // Stop audio capability
-            this.stopMIDI();
-
-            // Explicitly unload samples from synth engine
-            synth.unloadSamples();
-
-            // Clear data references to allow GC
-            this.organData = null;
-
-            this.banks = [];
-            this.currentCombination = [];
-            this.stopVolumes = {};
-            this.virtualStops = [];
-
-            // Trigger Garbage Collection
-            if ((window as any).gc) {
-                try {
-                    (window as any).gc();
-                    console.log('Manual GC triggered in Renderer');
-                } catch (e) {
-                    console.warn('Renderer GC failed (run with --expose-gc)', e);
-                }
-            } else {
-                console.warn('window.gc is undefined. Run with --js-flags="--expose-gc"');
-            }
-
-            // Trigger Main Process GC
-            if ((window as any).myApi?.triggerGC) {
-                await (window as any).myApi.triggerGC();
-            }
         }
     }
 });

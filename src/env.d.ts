@@ -21,6 +21,9 @@ export interface IElectronAPI {
   onExtractionStart: (callback: (event: any) => void) => () => void;
   listDir: (path: string) => Promise<string[]>;
   saveOrganState: (odfPath: string, state: any) => Promise<void>;
+  loadUserSettings: () => Promise<any>;
+  saveUserSettings: (settings: any) => Promise<void>;
+  parseOdf: (odfPath: string) => Promise<any>;
   loadOrganState: (odfPath: string) => Promise<any>;
   renderPerformance: (recording: any, organData: any, renderTails: boolean) => Promise<any>;
   cancelRendering: () => Promise<void>;
@@ -58,6 +61,8 @@ export interface IElectronAPI {
   logToMain: (msg: string) => void;
   notifyWorkerReady: () => void;
   onWorkerReady: (callback: (workerIndex: number) => void) => () => void;
+  sendSampleLoaded: (data: any) => void;
+  onSampleLoaded: (callback: (event: any, data: any) => void) => () => void;
 }
 
 declare global {

@@ -27,8 +27,9 @@ contextBridge.exposeInMainWorld('myApi', {
         return () => ipcRenderer.removeListener('extraction-start', listener);
     },
     listDir: (path: string) => ipcRenderer.invoke('list-dir', path),
-    saveOrganState: (odfPath: string, state: any) => ipcRenderer.invoke('save-organ-state', { odfPath, state }),
+    saveOrganState: (odfPath: string, state: any) => ipcRenderer.invoke('save-organ-state', odfPath, state),
     loadOrganState: (odfPath: string) => ipcRenderer.invoke('load-organ-state', odfPath),
+    parseOdf: (odfPath: string) => ipcRenderer.invoke('parse-odf', odfPath),
     getAppVersion: () => ipcRenderer.invoke('get-app-version'),
     getDiskInfo: (path: string) => ipcRenderer.invoke('get-disk-info', path),
     listRemovableDrives: () => ipcRenderer.invoke('list-removable-drives'),
@@ -37,7 +38,9 @@ contextBridge.exposeInMainWorld('myApi', {
     removeFromRecent: (path: string) => ipcRenderer.invoke('remove-from-recent', path),
     calculateOrganSize: (path: string) => ipcRenderer.invoke('calculate-organ-size', path),
     deleteOrganFiles: (path: string) => ipcRenderer.invoke('delete-organ-files', path),
-    triggerGC: () => ipcRenderer.invoke('trigger-gc'),
+
+    loadUserSettings: () => ipcRenderer.invoke('load-user-settings'),
+    saveUserSettings: (settings: any) => ipcRenderer.invoke('save-user-settings', settings),
 
     // Remote Control
     startWebServer: (port: number) => ipcRenderer.invoke('start-web-server', port),
@@ -120,5 +123,17 @@ contextBridge.exposeInMainWorld('myApi', {
         ipcRenderer.on('worker-stats', listener);
         return () => ipcRenderer.removeListener('worker-stats', listener);
     },
+    sendSampleLoaded: (data: any) => ipcRenderer.send('sample-loaded', data),
+    onSampleLoaded: (callback: (event: any, data: any) => void) => {
+        const listener = (event: any, data: any) => callback(event, data);
+        ipcRenderer.on('sample-loaded', listener);
+        return () => ipcRenderer.removeListener('sample-loaded', listener);
+    },
+    onSampleLoadedBatch: (callback: (event: any, count: number) => void) => {
+        const listener = (event: any, count: number) => callback(event, count);
+        ipcRenderer.on('sample-loaded-batch', listener);
+        return () => ipcRenderer.removeListener('sample-loaded-batch', listener);
+    },
+    resetProgressBuffer: () => ipcRenderer.invoke('reset-progress-buffer'),
     getProcessMemoryUsage: () => Promise.resolve(process.memoryUsage())
 });

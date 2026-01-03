@@ -85,7 +85,7 @@
                 <q-icon name="piano" size="120px" class="text-amber-8 q-mb-lg" />
                 <div class="text-h2 font-cinzel text-amber-9 q-mb-xl text-center">The Choir Organ</div>
                 <q-btn id="btn-open-odf-prominent" color="amber-9" size="xl" label="Install Organ"
-                    @click="() => organStore.loadOrgan()" icon="folder_open" class="font-cinzel q-px-xl q-py-md"
+                    @click="() => organStore.installOrgan()" icon="folder_open" class="font-cinzel q-px-xl q-py-md"
                     outline />
                 <div class="q-mt-xl text-center">
                     <q-btn flat color="grey-6" label="Preview SD card" @click="$router.push('/preview')"
@@ -100,7 +100,8 @@
                         animated control-color="amber-7" navigation infinite arrows height="400px"
                         class="bg-transparent rounded-borders">
                         <q-carousel-slide v-for="(file, index) in organStore.recentFiles" :key="file" :name="index"
-                            class="column no-wrap flex-center cursor-pointer" @click="organStore.loadOrgan(file)">
+                            class="column no-wrap flex-center cursor-pointer"
+                            @click="$router.push({ path: '/builder', query: { file } })">
                             <div class="slide-background-gradient absolute-full"></div>
                             <q-icon name="church" size="100px" color="amber-8" class="q-mb-md" style="z-index: 1;" />
                             <div class="text-h3 font-cinzel text-amber-1 q-px-xl text-center" style="z-index: 1;">
@@ -115,7 +116,7 @@
                     <div class="text-overline text-grey-6 q-mb-sm text-center">Recent Organs</div>
                     <q-list dark separator bordered class="rounded-borders bg-grey-10 shadow-2">
                         <q-item v-for="file in organStore.recentFiles" :key="file" clickable v-ripple
-                            @click="organStore.loadOrgan(file)">
+                            @click="$router.push({ path: '/builder', query: { file } })">
                             <q-item-section avatar>
                                 <q-icon name="history" color="amber-7" />
                             </q-item-section>
@@ -123,20 +124,29 @@
                                 <q-item-label class="text-amber-1 ellipsis">{{ getDisplayName(file) }}</q-item-label>
                             </q-item-section>
                             <q-item-section side>
-                                <q-btn flat round color="grey-5" icon="more_vert"
-                                    @click.stop="openManagementDialog(file)" />
+                                <div class="row q-gutter-x-xs">
+                                    <q-btn flat round color="grey-6" icon="settings"
+                                        @click.stop="openSettingsDialog(file)">
+                                        <q-tooltip>Configure Audio & Ranks</q-tooltip>
+                                    </q-btn>
+                                    <q-btn flat round color="grey-5" icon="more_vert"
+                                        @click.stop="openManagementDialog(file)" />
+                                </div>
                             </q-item-section>
                         </q-item>
                     </q-list>
 
                     <div class="row q-mt-xl justify-center q-gutter-md">
                         <q-btn color="amber-9" outline label="Install Organ" icon="folder_open"
-                            @click="() => organStore.loadOrgan()" class="font-cinzel" />
+                            @click="() => organStore.installOrgan()" class="font-cinzel" />
                         <q-btn flat color="grey-6" label="Preview SD card" @click="$router.push('/preview')"
                             class="font-cinzel" icon="sd_card" />
                     </div>
                 </div>
             </div>
+            <!-- Shared Audio Settings -->
+            <SharedAudioSettingsDialog v-model="showAudioSettings" :organ-path="selectedSettingsOrgan"
+                @apply="applyAudioSettings" />
         </div>
     </q-page>
 </template>
@@ -146,6 +156,7 @@ import { ref, onMounted, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useOrganStore } from 'src/stores/organ';
 import { useQuasar } from 'quasar';
+import SharedAudioSettingsDialog from 'src/components/SharedAudioSettingsDialog.vue';
 
 const organStore = useOrganStore();
 const router = useRouter();
@@ -153,23 +164,24 @@ const slide = ref(0);
 const $q = useQuasar();
 
 const isInfoDialogVisible = ref(false);
+const showAudioSettings = ref(false);
 const selectedOrgan = ref<{ path: string; name: string; size: string | null } | null>(null);
+const selectedSettingsOrgan = ref('');
 const isCalculating = ref(false);
+
+async function applyAudioSettings(settings: AudioSettings) {
+    let state = await window.myApi.loadOrganState(selectedSettingsOrgan.value);
+    console.log(settings);
+    console.log(selectedSettingsOrgan.value)
+    state.audioSettings = settings;
+    console.log(state)
+    await window.myApi.saveOrganState(selectedSettingsOrgan.value, JSON.parse(JSON.stringify(state)));
+}
 
 function getDisplayName(path: string) {
     if (!path || typeof path !== 'string') return '';
     const basename = path.split(/[\\/]/).pop() || path;
     return basename.replace(/\.organ$/i, '').replace(/\.Organ(_|\.)Hauptwerk(_|\.)xml$/i, '');
-}
-
-// Redirect to builder if organ is loaded
-function checkRedirect() {
-    if (organStore.organData) {
-        router.push({
-            path: '/builder',
-            query: { organ: organStore.organData.sourcePath }
-        });
-    }
 }
 
 function formatBytes(bytes: number, decimals = 2) {
@@ -203,6 +215,11 @@ async function openManagementDialog(file: string) {
     } finally {
         isCalculating.value = false;
     }
+}
+
+function openSettingsDialog(file: string) {
+    selectedSettingsOrgan.value = file;
+    showAudioSettings.value = true;
 }
 
 function handleRemoveList() {
@@ -247,7 +264,6 @@ function handleDeleteDisk() {
 
 onMounted(() => {
     organStore.fetchRecents();
-    checkRedirect();
 });
 
 watch(() => organStore.organData, (newData) => {

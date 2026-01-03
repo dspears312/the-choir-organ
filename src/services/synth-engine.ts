@@ -46,14 +46,24 @@ export class SynthEngine {
     private activeRequests = 0;
     private maxConcurrency = 20;
     private masterGain: GainNode;
+    private dryGain: GainNode;
+    private reverbGain: GainNode;
+    private convolver: ConvolverNode;
     public analyser: AnalyserNode;
     private isTsunamiMode = false;
     private useReleaseSamples = false;
+    private releaseMode: 'authentic' | 'convolution' | 'none' = 'authentic';
     private globalGainDb = 0;
+    private reverbImpulseParams = { length: 2.0, mix: 0.3 };
 
     constructor() {
         this.context = new (window.AudioContext || (window as any).webkitAudioContext)();
         this.masterGain = this.context.createGain();
+
+        // Reverb Chain
+        this.convolver = this.context.createConvolver();
+        this.dryGain = this.context.createGain();
+        this.reverbGain = this.context.createGain();
 
         this.analyser = this.context.createAnalyser();
         this.analyser.fftSize = 512;
@@ -61,9 +71,76 @@ export class SynthEngine {
 
         this.updateMasterGain();
 
-        // Routing: MasterGain -> Analyser -> Destination
-        this.masterGain.connect(this.analyser);
+        // Routing: 
+        // Voices -> MasterGain
+        // MasterGain -> DryGain -> Analyser
+        // MasterGain -> Convolver -> ReverbGain -> Analyser
+
+        this.masterGain.connect(this.dryGain);
+        this.dryGain.connect(this.analyser);
+
+        this.masterGain.connect(this.convolver);
+        this.convolver.connect(this.reverbGain);
+        this.reverbGain.connect(this.analyser);
+
         this.analyser.connect(this.context.destination);
+
+        // Default to dry
+        this.dryGain.gain.value = 1.0;
+        this.reverbGain.gain.value = 0.0;
+    }
+
+    configureReverb(length: number, mix: number) {
+        this.reverbImpulseParams = { length, mix };
+        if (this.releaseMode === 'convolution') {
+            this.generateImpulseResponse();
+            this.updateReverbMix();
+        }
+    }
+
+    setReleaseMode(mode: 'authentic' | 'convolution' | 'none') {
+        this.releaseMode = mode;
+        this.useReleaseSamples = mode === 'authentic';
+
+        if (mode === 'convolution') {
+            this.generateImpulseResponse();
+            this.updateReverbMix();
+        } else {
+            // Disable reverb (Dry only)
+            this.dryGain.gain.setTargetAtTime(1.0, this.context.currentTime, 0.05);
+            this.reverbGain.gain.setTargetAtTime(0.0, this.context.currentTime, 0.05);
+        }
+    }
+
+    private updateReverbMix() {
+        if (this.releaseMode !== 'convolution') return;
+        const mix = Math.min(Math.max(this.reverbImpulseParams.mix, 0), 1);
+        // Equal power crossfade roughly
+        const dry = Math.cos(mix * 0.5 * Math.PI);
+        const wet = Math.sin(mix * 0.5 * Math.PI);
+
+        this.dryGain.gain.setTargetAtTime(dry, this.context.currentTime, 0.05);
+        this.reverbGain.gain.setTargetAtTime(wet, this.context.currentTime, 0.05);
+    }
+
+    private generateImpulseResponse() {
+        const duration = this.reverbImpulseParams.length;
+        const decay = 2.0;
+        const rate = this.context.sampleRate;
+        const length = rate * duration;
+        const impulse = this.context.createBuffer(2, length, rate);
+        const left = impulse.getChannelData(0);
+        const right = impulse.getChannelData(1);
+
+        for (let i = 0; i < length; i++) {
+            // Simple exponential decay noise
+            const n = i / length;
+            const env = Math.pow(1 - n, decay);
+            left[i] = (Math.random() * 2 - 1) * env;
+            right[i] = (Math.random() * 2 - 1) * env;
+        }
+
+        this.convolver.buffer = impulse;
     }
 
     private updateMasterGain() {
@@ -81,16 +158,17 @@ export class SynthEngine {
         this.updateMasterGain();
     }
 
-    setUseReleaseSamples(enabled: boolean) {
-        this.useReleaseSamples = enabled;
-    }
+
 
     markStopSelected(stopId: string) {
         this.selectedStops.add(stopId);
     }
 
-    async loadSample(stopId: string, pipePath: string, type: 'partial' | 'full' = 'partial'): Promise<void> {
-        if (!pipePath) return;
+    async loadSample(stopId: string, pipePath: string, type: 'partial' | 'full' = 'partial', params?: { maxDuration?: number, cropToLoop?: boolean }): Promise<void> {
+        if (!pipePath) {
+            console.warn('No pipe path provided for sample load');
+            return;
+        }
         const key = `${stopId}-${pipePath}`;
 
         if (!this.buffers[key]) {
@@ -98,12 +176,24 @@ export class SynthEngine {
         }
 
         const sample = this.buffers[key];
-        if (type === 'full' && sample.status === 'full') return;
-        if (type === 'partial' && (sample.status === 'partial' || sample.status === 'full')) return;
+        if (type === 'full' && sample.status === 'full') {
+            console.warn('Sample already loaded');
+            return
+        };
+        if (type === 'partial' && (sample.status === 'partial' || sample.status === 'full')) {
+            console.warn('Sample already loaded');
+            return;
+        };
 
-        if (this.loadingTasks[key + '-' + type]) return this.loadingTasks[key + '-' + type];
+        // Include params in task key to allow concurrent loading of different versions if needed (unlikely but safe)
+        // actually standard 'full' should overwrite any special full load?
+        // 'full' usually means "the version we want to play". whether it's 1s or real full depends on params.
 
-        this.loadingTasks[key + '-' + type] = (async () => {
+        const taskKey = key + '-' + type;
+        if (this.loadingTasks[taskKey]) return this.loadingTasks[taskKey];
+
+        this.loadingTasks[taskKey] = (async () => {
+            // ... concurrency wait ...
             // Wait for a slot in the global concurrency queue
             if (this.activeRequests >= this.maxConcurrency) {
                 await new Promise<void>(resolve => {
@@ -119,6 +209,7 @@ export class SynthEngine {
             this.activeRequests++;
 
             try {
+                // ... cancel unloads ...
                 // Cancel pending unload for this sample if we are loading it
                 if (this.unloadTimeouts[key]) {
                     clearTimeout(this.unloadTimeouts[key]);
@@ -132,10 +223,13 @@ export class SynthEngine {
                     }
                 }
 
-                // Use high-performance custom protocol for binary data
-                // We use a query parameter for the path because absolute paths with drive letters/slashes 
-                // often get misinterpreted by the URL parser as host/authority.
-                const url = `organ-sample://host?path=${encodeURIComponent(pipePath)}&type=${type}`;
+                // Use high-performance custom protocol
+                let url = `organ-sample://host?path=${encodeURIComponent(pipePath)}&type=${type}`;
+                if (params) {
+                    if (params.maxDuration) url += `&maxDuration=${params.maxDuration}`;
+                    if (params.cropToLoop) url += `&cropToLoop=${params.cropToLoop}`;
+                }
+
                 const response = await fetch(url);
                 const arrayBuffer = await response.arrayBuffer();
                 const audioBuffer = await this.context.decodeAudioData(arrayBuffer);
@@ -152,7 +246,7 @@ export class SynthEngine {
             } catch (e) {
                 console.error(`Failed to load sample for synth: ${pipePath} (${type})`, e);
             } finally {
-                delete this.loadingTasks[key + '-' + type];
+                delete this.loadingTasks[taskKey];
                 // Release slot and trigger next in queue
                 this.activeRequests--;
                 if (this.requestQueue.length > 0) {
@@ -162,7 +256,7 @@ export class SynthEngine {
             }
         })();
 
-        return this.loadingTasks[key + '-' + type];
+        return this.loadingTasks[taskKey];
     }
 
     async noteOn(
@@ -647,19 +741,6 @@ export class SynthEngine {
         this.activeVoices = [];
         this.requestedNotes.clear();
     }
-
-    unloadSamples() {
-        this.clearAll();
-        // Clear references to large audio buffers
-        this.buffers = {};
-        this.metadata = {};
-        this.loadingTasks = {};
-        this.selectedStops.clear();
-        Object.values(this.unloadTimeouts).forEach(t => clearTimeout(t));
-        this.unloadTimeouts = {};
-        console.log('[Synth] All samples unloaded from memory.');
-    }
-
 
     close() {
         this.clearAll();

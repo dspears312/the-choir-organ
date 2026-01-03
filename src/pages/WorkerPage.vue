@@ -24,11 +24,10 @@ function log(msg: string) {
     if (window.myApi) window.myApi.logToMain(msg);
 }
 
-onMounted(() => {
+onMounted(async () => {
     log('Worker mounted');
 
     // Initialize IPC listeners
-    // using window.myApi
     if (window.myApi) {
         status.value = 'Ready';
         window.myApi.notifyWorkerReady();
@@ -43,9 +42,6 @@ onMounted(() => {
             // Fallback IPC command handling
             handleCommand(command);
         });
-
-        // Notify ready AFTER setting up listeners
-        window.myApi.notifyWorkerReady();
 
         // Start Stats Loop
         if (!(window as any).statsStarted) {
@@ -66,12 +62,21 @@ async function handleCommand(cmd: any) {
     if (cmd.type === 'note-on') {
         log(`Note On: Stop=${cmd.stopId} Path=${cmd.pipePath}`);
     } else {
-        log(`Received command: ${cmd.type}`);
+        if (cmd.type != 'load-sample') {
+            log(`Received command: ${cmd.type}`);
+        }
     }
 
     switch (cmd.type) {
         case 'load-sample':
-            await synth.loadSample(cmd.stopId, cmd.pipePath, cmd.loadType);
+            // log(`Loading sample: ${cmd.pipePath} (Type: ${cmd.loadType}, Params: ${JSON.stringify(cmd.params)})`);
+            try {
+                await synth.loadSample(cmd.stopId, cmd.pipePath, cmd.loadType, cmd.params);
+            } catch (e) {
+                log(`Error loading sample: ${cmd.pipePath} (Type: ${cmd.loadType}, Params: ${JSON.stringify(cmd.params)})`);
+            } finally {
+                window.myApi.sendSampleLoaded({ pipePath: cmd.pipePath });
+            }
             break;
         case 'note-on':
             synth.noteOn(
@@ -98,13 +103,15 @@ async function handleCommand(cmd: any) {
             log(`Setting global gain: ${cmd.db}dB`);
             synth.setGlobalGain(cmd.db);
             break;
-        case 'set-use-release-samples':
-            log(`Setting use release samples: ${cmd.enabled}`);
-            synth.setUseReleaseSamples(cmd.enabled);
+        case 'set-release-mode':
+            log(`Setting release mode: ${cmd.mode}`);
+            synth.setReleaseMode(cmd.mode);
+            // Backward compatibility until SynthClient is updated fully
+            // (setReleaseMode handles internal useReleaseSamples flag)
             break;
-        case 'set-tsunami-mode':
-            log(`Setting tsunami mode: ${cmd.enabled}`);
-            synth.setTsunamiMode(cmd.enabled);
+        case 'configure-reverb':
+            log(`Configuring reverb: Length=${cmd.length}, Mix=${cmd.mix}`);
+            synth.configureReverb(cmd.length, cmd.mix);
             break;
         case 'update-tremulants':
             synth.updateTremulants(cmd.allActiveTremulants);

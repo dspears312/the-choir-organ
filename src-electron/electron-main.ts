@@ -6,11 +6,11 @@ import os from 'os';
 import { fileURLToPath, pathToFileURL } from 'url'
 import { setImmediate } from 'timers';
 import { exec } from 'child_process';
-import { parseODF } from './utils/odf-parser';
+import { OrganData, parseODF } from './utils/odf-parser';
 import { parseHauptwerk } from './utils/hauptwerk-parser';
 import { renderNote, renderPerformance } from './utils/renderer';
 import { readWav } from './utils/wav-reader';
-import { addToRecent, getRecents, saveOrganState, loadOrganState, removeFromRecent } from './utils/persistence';
+import { addToRecent, getRecents, loadOrganState, loadSettings, removeFromRecent, saveOrganState, saveSettings, loadOrganCache, saveOrganCache } from './utils/persistence';
 import { handleRarExtraction } from './utils/archive-handler';
 import { scanOrganDependencies } from './utils/organ-manager';
 import { createPartialWav } from './utils/partial-wav';
@@ -21,22 +21,22 @@ const require = createRequire(import.meta.url);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const { autoUpdater } = require('electron-updater');
-import v8 from 'v8';
-import vm from 'vm';
+// import v8 from 'v8';
+// import vm from 'vm';
 
-// Programmatically Enable GC in Main Process (Node.js)
-v8.setFlagsFromString('--expose_gc');
-if (!global.gc) {
-  try {
-    global.gc = vm.runInNewContext('gc');
-    console.log('[Main] V8 GC exposed programmatically.');
-  } catch (e) {
-    console.error('[Main] Failed to expose GC:', e);
-  }
-}
+// // Programmatically Enable GC in Main Process (Node.js)
+// v8.setFlagsFromString('--expose_gc');
+// if (!global.gc) {
+//   try {
+//     global.gc = vm.runInNewContext('gc');
+//     console.log('[Main] V8 GC exposed programmatically.');
+//   } catch (e) {
+//     console.error('[Main] Failed to expose GC:', e);
+//   }
+// }
 
-// Pass flags to Renderer Process (Chrome)
-app.commandLine.appendSwitch('js-flags', '--expose_gc --max_old_space_size=12288');
+// // Pass flags to Renderer Process (Chrome)
+// app.commandLine.appendSwitch('js-flags', '--expose_gc --max_old_space_size=12288');
 
 
 // needed in case process is undefined under Linux
@@ -89,6 +89,33 @@ let mainWindow: BrowserWindow | undefined;
 let workerWindows: BrowserWindow[] = [];
 let isCancellationRequested = false;
 let memoryInterval: NodeJS.Timeout | null = null;
+
+// Batched Sample Progress Tracking
+let batchedSampleCount = 0;
+let lastBatchTime = 0;
+const BATCH_INTERVAL_MS = 100;
+
+function sendBatchedProgress() {
+  if (batchedSampleCount > 0 && mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('sample-loaded-batch', batchedSampleCount);
+    batchedSampleCount = 0;
+    lastBatchTime = Date.now();
+  }
+}
+
+ipcMain.on('sample-loaded', (event) => {
+  batchedSampleCount++;
+  const now = Date.now();
+  if (now - lastBatchTime > BATCH_INTERVAL_MS) {
+    sendBatchedProgress();
+  }
+});
+
+ipcMain.handle('reset-progress-buffer', () => {
+  batchedSampleCount = 0;
+  lastBatchTime = 0;
+  return true;
+});
 
 
 function startMemoryMonitoring(window: BrowserWindow) {
@@ -346,10 +373,25 @@ ipcMain.handle('select-odf-file', async (event, specificPath?: string) => {
 
     addToRecent(filePath);
 
-    // Offload parsing to worker thread to avoid hanging UI
-    return await WorkerFactory.spawn('parser-worker', {
+    // 1. Check Cache
+    const cachedData = loadOrganCache(filePath);
+    if (cachedData) {
+      console.log(`[Main] Using cached organ definition for: ${filePath}`);
+      return cachedData;
+    }
+
+    // 2. Offload parsing to worker thread
+    const parsedData = await WorkerFactory.spawn('parser-worker', {
       workerData: { filePath: filePath }
     });
+
+    // 3. Save to Cache if successful
+    if (parsedData && !parsedData.error) {
+      console.log(`[Main] Saving result to cache for: ${filePath}`);
+      saveOrganCache(filePath, parsedData);
+    }
+
+    return parsedData;
   } catch (e: any) {
     console.error(e);
     return { error: e.message };
@@ -527,7 +569,7 @@ ipcMain.handle('select-folder', async () => {
 
 ipcMain.handle('get-wav-info', async (event, filePath: string) => {
   try {
-    const info = readWav(filePath, undefined, true);
+    const info = readWav(filePath, { metadataOnly: true });
     const { data: _data, ...metadata } = info;
     return metadata;
   } catch (e) {
@@ -550,16 +592,52 @@ ipcMain.handle('get-recent-files', async () => {
   return getRecents();
 });
 
-ipcMain.handle('save-organ-state', async (event, { odfPath, state }) => {
-  return saveOrganState(odfPath, state);
+ipcMain.handle('load-user-settings', async () => {
+  return loadSettings();
+});
+
+ipcMain.handle('save-user-settings', async (event, settings) => {
+  saveSettings(settings);
 });
 
 ipcMain.handle('load-organ-state', async (event, odfPath) => {
   return loadOrganState(odfPath);
 });
 
+ipcMain.handle('save-organ-state', async (event, odfPath, state) => {
+  saveOrganState(odfPath, state);
+});
+
 ipcMain.handle('get-app-version', () => {
   return process.env.APP_VERSION || app.getVersion();
+});
+
+ipcMain.handle('parse-odf', async (event, odfPath: string) => {
+  try {
+    if (!fs.existsSync(odfPath)) throw new Error(`File not found: ${odfPath}`);
+
+    // 1. Check Cache first
+    const cachedData = loadOrganCache(odfPath);
+    if (cachedData) {
+      console.log(`[Main] Using cached organ definition for: ${odfPath} (ranks request)`);
+      return cachedData;
+    }
+
+    // 2. Offload parsing to worker thread
+    const parsedData = await WorkerFactory.spawn('parser-worker', {
+      workerData: { filePath: odfPath }
+    });
+
+    // 3. Save to Cache if successful
+    if (parsedData && !parsedData.error) {
+      saveOrganCache(odfPath, parsedData);
+    }
+
+    return parsedData;
+  } catch (e: any) {
+    console.error('parse-odf error:', e);
+    return { error: e.message };
+  }
 });
 
 ipcMain.handle('get-disk-info', async (event, folderPath: string) => {
@@ -694,30 +772,31 @@ ipcMain.handle('format-volume', async (event, { path: folderPath, label }) => {
   });
 });
 
-ipcMain.handle('trigger-gc', () => {
-  try {
-    if (global.gc) {
-      global.gc();
-      console.log('Manual GC triggered in Main Process');
-      return { success: true };
-    } else {
-      console.warn('GC not exposed. Run with --js-flags="--expose-gc"');
-      return { success: false, error: 'GC not exposed' };
-    }
-  } catch (e: any) {
-    console.error('GC failed:', e);
-    return { success: false, error: e.message };
-  }
-});
+
 
 ipcMain.handle('create-workers', async (event, count: number) => {
-  console.log(`[Main] Creating ${count} worker windows...`);
+  if (count == 0) {
+    if (workerWindows.length > 0) {
+      console.log(`[Main] Unloading workers...`);
+      workerWindows.forEach(w => {
+        console.log(w)
+        try { w.destroy(); } catch (e) { console.error(e) }
+      });
+      workerWindows = [];
+    }
 
-  // Close existing workers
-  workerWindows.forEach(w => {
-    try { w.close(); } catch (e) {/* ignore */ }
-  });
+    return { success: true };
+  } else {
+    console.log(`[Main] Creating ${count} worker windows...`);
+
+    // Close existing workers
+    workerWindows.forEach(w => {
+      try { w.destroy(); } catch (e) {/* ignore */ }
+    });
+  }
+
   workerWindows = [];
+  const loadPromises: Promise<void>[] = [];
 
   for (let i = 0; i < count; i++) {
     const workerWin = new BrowserWindow({
@@ -732,16 +811,20 @@ ipcMain.handle('create-workers', async (event, count: number) => {
       }
     });
 
-    if (process.env.DEV) {
-      // In dev mode, we access localhost
-      await workerWin.loadURL(`${process.env.APP_URL}/#/worker`);
-    } else {
-      // In prod mode, we load the index file with hash
-      await workerWin.loadFile('index.html', { hash: '/worker' });
-    }
-
     // workerWin.webContents.openDevTools({ mode: 'detach' }); 
     workerWindows.push(workerWin);
+
+    if (process.env.DEV) {
+      loadPromises.push(workerWin.loadURL(`${process.env.APP_URL}/#/worker`));
+    } else {
+      loadPromises.push(workerWin.loadFile('index.html', { hash: '/worker' }));
+    }
+  }
+
+  try {
+    await Promise.all(loadPromises);
+  } catch (e) {
+    console.error('[Main] Error loading worker windows:', e);
   }
 
   return { success: true };
@@ -756,12 +839,14 @@ ipcMain.on('send-worker-command', (event, { workerIndex, command }) => {
 ipcMain.on('worker-log', (event, msg) => {
   // Find which worker sent this
   const index = workerWindows.indexOf(BrowserWindow.fromWebContents(event.sender)!);
+  if (index === -1) return;
   console.log(`[Worker ${index}] ${msg}`);
 });
 
 ipcMain.on('worker-ready', (event) => {
   // Find which worker sent this
   const index = workerWindows.indexOf(BrowserWindow.fromWebContents(event.sender)!);
+  if (index === -1) return;
   console.log(`[Main] Worker ${index} is ready.`);
   mainWindow?.webContents.send('worker-ready', index);
 });
@@ -770,6 +855,7 @@ ipcMain.on('worker-stats', async (event, stats) => {
   // Forward stats to main window
   const wc = event.sender;
   const index = workerWindows.indexOf(BrowserWindow.fromWebContents(wc)!);
+  if (index === -1) return;
 
   // Inject Process Memory Info (from Main process side)
   try {
@@ -787,9 +873,14 @@ ipcMain.on('worker-stats', async (event, stats) => {
   } catch (e) {
     console.warn(`[Main] Failed to get memory for worker ${index}`, e);
   }
-
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('worker-stats', { workerIndex: index, stats });
+  }
+});
+
+ipcMain.on('sample-loaded', (event, data) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('sample-loaded', data);
   }
 });
 
@@ -906,33 +997,34 @@ void app.whenReady().then(() => {
   });
 
   // High-performance protocol for organ samples
-  protocol.handle('organ-sample', (request) => {
+  protocol.handle('organ-sample', async (request) => {
     try {
       const url = new URL(request.url);
       const filePath = url.searchParams.get('path');
-      const isPartial = url.searchParams.get('type') === 'partial';
+      const type = url.searchParams.get('type') as 'partial' | 'full';
+      const maxDurationStr = url.searchParams.get('maxDuration');
+      const maxDuration = maxDurationStr ? parseFloat(maxDurationStr) : undefined;
+      const cropToLoop = url.searchParams.get('cropToLoop') === 'true';
 
       if (!filePath) {
-        console.error('Organ-sample request missing path:', request.url);
         return new Response('Missing path', { status: 400 });
       }
 
-      if (!fs.existsSync(filePath)) {
-        console.warn(`Organ-sample file not found: ${filePath}`);
-        return new Response('File not found', { status: 404 });
-      }
+      // Check if we need special processing (Partial, Quick Load, or Convolution Crop)
+      if (type === 'partial' || cropToLoop || maxDuration) {
+        const options: PartialWavOptions = {
+          cropToLoop,
+          maxDuration: maxDuration ?? (type === 'partial' ? 0.5 : undefined)
+        };
 
-      if (isPartial) {
-        const partialBuffer = createPartialWav(filePath, 24000); // 1s at 48k
+        const partialBuffer = createPartialWav(decodeURIComponent(filePath), options);
         if (partialBuffer) {
-          return new Response(partialBuffer as any, {
-            headers: { 'Content-Type': 'audio/wav' }
-          });
+          return new Response(partialBuffer, { headers: { 'Content-Type': 'audio/wav' } });
         }
       }
 
-      // Default: Serve full file
-      return net.fetch(pathToFileURL(filePath).toString());
+      // Default: Serve full file efficiently (Stream)
+      return net.fetch(pathToFileURL(decodeURIComponent(filePath)).toString());
     } catch (e) {
       console.error('Organ-sample protocol error:', e);
       return new Response('Internal error', { status: 500 });

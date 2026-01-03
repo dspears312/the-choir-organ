@@ -5,15 +5,59 @@ import crypto from 'crypto';
 
 const DATA_FILE = 'user-settings.json';
 const ORGAN_STATES_DIR = 'organ-states';
+const ORGAN_CACHE_DIR = 'organ-cache';
+
+function getOrganCachePath(odfPath: string): string {
+    const cacheDir = path.join(app.getPath('userData'), ORGAN_CACHE_DIR);
+    if (!fs.existsSync(cacheDir)) {
+        fs.mkdirSync(cacheDir, { recursive: true });
+    }
+
+    try {
+        const stats = fs.statSync(odfPath);
+        const mtime = stats.mtime.getTime();
+        const size = stats.size;
+        const hash = crypto.createHash('md5').update(`${odfPath}:${mtime}:${size}`).digest('hex');
+        return path.join(cacheDir, `${hash}.json`);
+    } catch (e) {
+        // Fallback to path-only hash if file doesn't exist (unlikely here but safe)
+        const hash = crypto.createHash('md5').update(odfPath).digest('hex');
+        return path.join(cacheDir, `${hash}.json`);
+    }
+}
+
+export function saveOrganCache(odfPath: string, data: any) {
+    try {
+        const p = getOrganCachePath(odfPath);
+        fs.writeFileSync(p, JSON.stringify(data));
+    } catch (e) {
+        console.error(`Failed to save organ cache for ${odfPath}`, e);
+    }
+}
+
+export function loadOrganCache(odfPath: string): any | null {
+    try {
+        const p = getOrganCachePath(odfPath);
+        if (fs.existsSync(p)) {
+            const raw = fs.readFileSync(p, 'utf-8');
+            return JSON.parse(raw);
+        }
+    } catch (e) {
+        console.error(`Failed to load organ cache for ${odfPath}`, e);
+    }
+    return null;
+}
 
 interface UserSettings {
     recentOdfs: string[];
     lastExportDir: string;
+    workerCount: number;
 }
 
 const DEFAULT_SETTINGS: UserSettings = {
     recentOdfs: [],
-    lastExportDir: ''
+    lastExportDir: '',
+    workerCount: 1
 };
 
 function getSettingsPath(): string {
@@ -56,6 +100,7 @@ export function saveSettings(settings: Partial<UserSettings>) {
 export function saveOrganState(odfPath: string, state: any) {
     try {
         const p = getOrganStatePath(odfPath);
+        console.log(`[Persistence] Saving organ state to ${p}. Keys: ${Object.keys(state)}`);
         fs.writeFileSync(p, JSON.stringify(state, null, 2));
     } catch (e) {
         console.error(`Failed to save organ state for ${odfPath}`, e);
@@ -67,7 +112,9 @@ export function loadOrganState(odfPath: string): any | null {
         const p = getOrganStatePath(odfPath);
         if (fs.existsSync(p)) {
             const raw = fs.readFileSync(p, 'utf-8');
-            return JSON.parse(raw);
+            const data = JSON.parse(raw);
+            console.log(`[Persistence] Loaded organ state from ${p}. Keys: ${Object.keys(data)}`);
+            return data;
         }
     } catch (e) {
         console.error(`Failed to load organ state for ${odfPath}`, e);

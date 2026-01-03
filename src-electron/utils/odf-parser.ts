@@ -16,9 +16,12 @@ export interface OrganPipe {
 }
 
 export interface OrganRank {
+  id: string; // Added ID
   name: string;
   gain: number;
   pipes: OrganPipe[];
+  windchestGroup?: string;
+  stopIds: string[]; // Back-reference
 }
 
 export interface OrganStop {
@@ -438,11 +441,13 @@ export function parseODF(filePath: string): OrganData {
       }
 
       organData.ranks[rankId] = {
+        id: rankId,
         name: rank.Name || `Rank ${rankId}`,
         gain: parseGain(rank),
         pipes,
-        windchestGroup: normalizeId(rank.WindchestGroup || '001')
-      } as any;
+        windchestGroup: normalizeId(rank.WindchestGroup || '001'),
+        stopIds: []
+      } as OrganRank;
     }
   });
 
@@ -525,6 +530,12 @@ export function parseODF(filePath: string): OrganData {
 
               organData.stops[actualStopId] = stopData;
               mData.stopIds.push(actualStopId);
+              // Back-reference: Add stopId to ranks
+              rankIds.forEach(rid => {
+                if (organData.ranks[rid]) {
+                  organData.ranks[rid].stopIds.push(actualStopId);
+                }
+              });
             }
           }
         }

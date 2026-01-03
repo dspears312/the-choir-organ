@@ -101,9 +101,11 @@ export function parseHauptwerk(filePath: string): OrganData {
         if (isNoise) return;
 
         organData.ranks[id] = {
+            id,
             name,
             gain: 0,
             pipes: [],
+            stopIds: []
         };
     });
 
@@ -509,6 +511,13 @@ export function parseHauptwerk(filePath: string): OrganData {
             const firstManual = organData.manuals[0];
             if (firstManual) firstManual.stopIds.push(id);
         }
+
+        // Back-populate stopIds to ranks
+        rankIds.forEach(rid => {
+            if (organData.ranks[rid]) {
+                organData.ranks[rid].stopIds.push(id);
+            }
+        });
     });
 
     return organData;
