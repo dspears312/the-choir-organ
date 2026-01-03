@@ -72,7 +72,15 @@ export const useOrganStore = defineStore('organ', {
         isRecording: false,
         recordingStartTime: 0,
         currentRecordingEvents: [] as TimelineEvent[],
-        recordings: [] as RecordingSession[]
+        recordings: [] as RecordingSession[],
+
+        // Remote Server State
+        remoteServerStatus: {
+            running: false,
+            port: 8080,
+            ips: [] as string[]
+        },
+        remoteSyncCleanup: null as (() => void) | null
     }),
     getters: {
         targetVolumeLabel: (state) => {
@@ -99,7 +107,7 @@ export const useOrganStore = defineStore('organ', {
             this.isRestoring = true;
             let data;
             if (path && typeof path === 'string') {
-                data = await (window as any).myApi.selectOdfFile(path);
+                data = await window.myApi.selectOdfFile(path);
                 this.isLoadingOrgan = true;
             } else {
                 this.isLoadingOrgan = true;
@@ -115,11 +123,11 @@ export const useOrganStore = defineStore('organ', {
                     this.extractionFile = data.file;
                 };
 
-                (window as any).myApi.onExtractionStart(startListener);
-                (window as any).myApi.onExtractionProgress(progressListener);
+                window.myApi.onExtractionStart(startListener);
+                window.myApi.onExtractionProgress(progressListener);
 
                 try {
-                    data = await (window as any).myApi.selectOdfFile();
+                    data = await window.myApi.selectOdfFile();
                 } finally {
                     this.isExtracting = false;
                 }
@@ -146,7 +154,7 @@ export const useOrganStore = defineStore('organ', {
                 this.fetchRecents();
 
                 // Load internal saved state if exists
-                const savedState = await (window as any).myApi.loadOrganState(this.organData.sourcePath);
+                const savedState = await window.myApi.loadOrganState(this.organData.sourcePath);
                 if (savedState) {
                     if (savedState.banks) this.banks = savedState.banks;
                     if (savedState.stopVolumes) {
@@ -161,6 +169,11 @@ export const useOrganStore = defineStore('organ', {
                     }
                     if (savedState.virtualStops) this.virtualStops = savedState.virtualStops;
                     if (savedState.recordings) this.recordings = savedState.recordings;
+                    if (savedState.remoteServerPort) this.remoteServerStatus.port = savedState.remoteServerPort;
+                    if (savedState.isWebServerEnabled) {
+                        console.log('[WebRemote] Auto-starting web server based on saved state');
+                        this.setRemoteServerState(true);
+                    }
                 }
 
                 // Start drive polling
@@ -169,11 +182,12 @@ export const useOrganStore = defineStore('organ', {
                 this.drivePollInterval = setInterval(() => this.fetchDrives(), 5000);
             }
             this.isLoadingOrgan = false;
+            this.syncRemoteState();
             setTimeout(() => { this.isRestoring = false; }, 100);
         },
 
         async fetchRecents() {
-            this.recentFiles = await (window as any).myApi.getRecentFiles();
+            this.recentFiles = await window.myApi.getRecentFiles();
         },
 
         toggleStop(stopId: string) {
@@ -208,6 +222,14 @@ export const useOrganStore = defineStore('organ', {
                     stopId
                 });
             }
+            this.syncRemoteState();
+        },
+
+        setStopState(stopId: string, isOn: boolean) {
+            const isCurrentlyOn = this.currentCombination.includes(stopId);
+            if (isCurrentlyOn !== isOn) {
+                this.toggleStop(stopId);
+            }
         },
 
         clearCombination() {
@@ -229,6 +251,7 @@ export const useOrganStore = defineStore('organ', {
                 });
             }
             this.currentCombination = [];
+            this.syncRemoteState();
         },
 
         setTsunamiMode(enabled: boolean) {
@@ -277,6 +300,70 @@ export const useOrganStore = defineStore('organ', {
                 this.midiStatus = 'Error';
                 this.midiError = err.message || 'Failed to access MIDI devices.';
             });
+        },
+
+        initRemoteSync() {
+            if (this.remoteSyncCleanup) {
+                this.remoteSyncCleanup();
+                this.remoteSyncCleanup = null;
+            }
+            this.remoteSyncCleanup = window.myApi.onRemoteToggleStop((event: any, stopId: string) => {
+                this.toggleStop(stopId);
+            });
+            const clearCleanup = window.myApi.onRemoteClearCombination(() => {
+                this.clearCombination();
+            });
+            const originalCleanup = this.remoteSyncCleanup;
+            this.remoteSyncCleanup = () => {
+                if (originalCleanup) originalCleanup();
+                clearCleanup();
+            };
+            this.refreshRemoteStatus();
+        },
+
+        async setRemoteServerState(running: boolean) {
+            if (running && !this.remoteServerStatus.running) {
+                this.remoteServerStatus = await window.myApi.startWebServer(this.remoteServerStatus.port);
+                this.syncRemoteState();
+            } else if (!running && this.remoteServerStatus.running) {
+                this.remoteServerStatus = await window.myApi.stopWebServer();
+            }
+            this.saveInternalState();
+        },
+
+        async toggleRemoteServer() {
+            await this.setRemoteServerState(!this.remoteServerStatus.running);
+        },
+
+        async refreshRemoteStatus() {
+            this.remoteServerStatus = await window.myApi.getWebServerStatus();
+        },
+
+        syncRemoteState() {
+            if (this.remoteServerStatus.running && this.organData) {
+                const cleanState = JSON.parse(JSON.stringify({
+                    organData: {
+                        name: this.organData?.name,
+                        manuals: this.organData?.manuals?.map((m: any) => ({
+                            id: m.id,
+                            name: m.name,
+                            stopIds: m.stopIds
+                        })),
+                        stops: Object.fromEntries(
+                            Object.entries(this.organData?.stops || {}).map(([id, s]: [string, any]) => [
+                                id,
+                                { id: s.id, name: s.name, pitch: s.pitch }
+                            ])
+                        ),
+                        screens: this.organData?.screens || [],
+                        activeScreenIndex: this.organData?.activeScreenIndex || 0
+                    },
+                    activatedStops: [...this.currentCombination]
+                }));
+                window.myApi.updateRemoteState(cleanState);
+            } else if (!this.organData) {
+                console.warn('[Remote] syncRemoteState called but organData is null');
+            }
         },
 
         stopMIDI() {
@@ -402,7 +489,7 @@ export const useOrganStore = defineStore('organ', {
         },
 
         async setOutputDir() {
-            const dir = await (window as any).myApi.selectFolder();
+            const dir = await window.myApi.selectFolder();
             if (dir) {
                 this.outputDir = dir;
                 await this.updateDiskInfo();
@@ -414,12 +501,12 @@ export const useOrganStore = defineStore('organ', {
                 this.isOutputRemovable = false;
                 return;
             }
-            const info = await (window as any).myApi.getDiskInfo(this.outputDir);
+            const info = await window.myApi.getDiskInfo(this.outputDir);
             this.isOutputRemovable = !!(info && info.isRemovable);
         },
 
         async fetchDrives() {
-            const drives = await (window as any).myApi.listRemovableDrives();
+            const drives = await window.myApi.listRemovableDrives();
             this.availableDrives = drives;
 
             // Auto-select TCO drive if nothing selected
@@ -435,7 +522,7 @@ export const useOrganStore = defineStore('organ', {
 
         async checkOutputPath() {
             if (!this.outputDir) return { type: 'none' };
-            const info = await (window as any).myApi.getDiskInfo(this.outputDir);
+            const info = await window.myApi.getDiskInfo(this.outputDir);
             if (info && info.isRemovable && info.isRoot) {
                 return { type: 'removable_root', info };
             }
@@ -453,7 +540,7 @@ export const useOrganStore = defineStore('organ', {
             const label = this.targetVolumeLabel;
 
             try {
-                const result = await (window as any).myApi.formatVolume(this.outputDir, label);
+                const result = await window.myApi.formatVolume(this.outputDir, label);
                 if (result.success && result.newPath) {
                     this.outputDir = result.newPath;
                     this.renderStatus = 'Format successful.';
@@ -470,7 +557,7 @@ export const useOrganStore = defineStore('organ', {
         },
 
         cancelRendering() {
-            (window as any).myApi.cancelRendering();
+            window.myApi.cancelRendering();
             this.renderStatus = 'Cancelling...';
         },
 
@@ -522,8 +609,7 @@ export const useOrganStore = defineStore('organ', {
                         stopId: id
                     });
                 }
-            }
-            );
+            });
         },
 
         deleteBank(index: number) {
@@ -694,7 +780,9 @@ export const useOrganStore = defineStore('organ', {
                 useReleaseSamples: this.useReleaseSamples,
                 outputDir: this.outputDir,
                 virtualStops: this.virtualStops,
-                recordings: this.recordings
+                recordings: this.recordings,
+                isWebServerEnabled: this.remoteServerStatus.running,
+                remoteServerPort: this.remoteServerStatus.port
             }));
             await (window as any).myApi.saveOrganState(this.organData.sourcePath, state);
         },
@@ -795,17 +883,17 @@ export const useOrganStore = defineStore('organ', {
         },
 
         async removeRecent(path: string) {
-            await (window as any).myApi.removeFromRecent(path);
+            await window.myApi.removeFromRecent(path);
             await this.fetchRecents();
         },
 
         async getOrganSize(path: string) {
-            const result = await (window as any).myApi.calculateOrganSize(path);
+            const result = await window.myApi.calculateOrganSize(path);
             return result.size || 0;
         },
 
         async deleteOrgan(path: string) {
-            const result = await (window as any).myApi.deleteOrganFiles(path);
+            const result = await window.myApi.deleteOrganFiles(path);
             if (result.success) {
                 await this.fetchRecents();
                 return { success: true };

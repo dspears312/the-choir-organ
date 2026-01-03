@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>TCO Remote Console</title>
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700&family=Inter:wght@400;500;600&display=swap"
+        rel="stylesheet">
+    <link rel="manifest" href="manifest.json">
+    <link rel="icon" type="image/png" href="favicon.ico">
+    <meta name="theme-color" content="#d4af37">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="TCO Remote">
+
+    <style>
+        body {
+            margin: 0;
+            background-color: #050505;
+            color: #c9d1d9;
+            overflow: hidden;
+            /* Disable pull-to-refresh */
+            overscroll-behavior-y: contain;
+        }
+    </style>
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('sw.js')
+                    .then(reg => console.log('[SW] Registered', reg))
+                    .catch(err => console.error('[SW] Registration failed', err));
+            });
+        }
+    </script>
+</head>
+
+<body>
+    <div id="app"></div>
+    <script type="module" src="./main.ts"></script>
+</body>
+
+</html>

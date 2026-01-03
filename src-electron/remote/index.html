@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>TCO Remote Console</title>
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700&family=Inter:wght@400;500;600&display=swap"
+        rel="stylesheet">
+
+    <!-- Using Vue 3 and SFC Loader from CDN for zero-build remote -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/vue3-sfc-loader/dist/vue3-sfc-loader.js"></script>
+
+    <style>
+        :root {
+            --bg-color: #050505;
+            --accent-color: #d4af37;
+            --text-color: #c9d1d9;
+        }
+
+        body,
+        html,
+        #app {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            font-family: 'Inter', sans-serif;
+            overflow: hidden;
+        }
+
+        .loading-screen {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            background: radial-gradient(circle at center, #111 0%, #050505 100%);
+        }
+
+        .font-cinzel {
+            font-family: 'Cinzel', serif;
+        }
+
+        .text-accent {
+            color: var(--accent-color);
+        }
+
+        /* Simple Spinner */
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 3px solid rgba(212, 175, 55, 0.1);
+            border-top: 3px solid var(--accent-color);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 20px;
+        }
+
+        @keyframes spin {
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+
+        .remote-layout {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+        }
+
+        header {
+            padding: 10px 20px;
+            background: rgba(0, 0, 0, 0.8);
+            border-bottom: 1px solid rgba(212, 175, 55, 0.2);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            z-index: 100;
+        }
+
+        .organ-name {
+            font-size: 1.1rem;
+            letter-spacing: 0.1em;
+            margin: 0;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 6px;
+        }
+
+        .status-online {
+            background: #3fb950;
+            box-shadow: 0 0 10px #3fb950;
+        }
+
+        .status-offline {
+            background: #f85149;
+        }
+
+        .main-view {
+            flex: 1;
+            position: relative;
+            overflow: hidden;
+        }
+
+        /* Fallback List View Styles */
+        .fallback-view {
+            flex: 1;
+            overflow-y: auto;
+            padding: 1rem;
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+            gap: 12px;
+            align-content: start;
+        }
+
+        .manual-group {
+            grid-column: 1 / -1;
+            margin: 1.5rem 0 0.5rem 0;
+            padding-left: 8px;
+            border-left: 3px solid var(--accent-color);
+            font-size: 0.9rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--accent-color);
+        }
+
+        .stop-btn {
+            background: #1a1a1a;
+            border: 1px solid #333;
+            border-radius: 8px;
+            padding: 12px;
+            color: #ccc;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            min-height: 60px;
+        }
+
+        .stop-btn.active {
+            background: #238636;
+            border-color: #2ea043;
+            color: white;
+            box-shadow: 0 0 10px rgba(35, 134, 54, 0.4);
+        }
+
+        .stop-pitch {
+            font-size: 0.7rem;
+            opacity: 0.6;
+            margin-top: 4px;
+        }
+
+        /* Screen Selector UI (if multiple screens) */
+        .screen-tabs {
+            display: flex;
+            background: #111;
+            padding: 5px;
+            gap: 5px;
+            overflow-x: auto;
+        }
+
+        .screen-tab {
+            padding: 8px 16px;
+            font-size: 0.8rem;
+            border-radius: 4px;
+            cursor: pointer;
+            white-space: nowrap;
+            background: #222;
+            color: #888;
+            transition: all 0.2s;
+        }
+
+        .screen-tab.active {
+            background: var(--accent-color);
+            color: #000;
+            font-weight: 600;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="app">
+        <div v-if="loading" class="loading-screen">
+            <div class="spinner"></div>
+            <div class="font-cinzel text-accent">Loading Console...</div>
+        </div>
+        <div v-else class="remote-layout">
+            <header>
+                <h1 class="font-cinzel organ-name text-accent">{{ organData?.name || 'The Choir Organ' }}</h1>
+                <div style="font-size: 0.7rem; opacity: 0.7; display: flex; align-items: center;">
+                    <span class="status-dot" :class="connected ? 'status-online' : 'status-offline'"></span>
+                    {{ connected ? 'Connected' : 'Reconnecting...' }}
+                </div>
+            </header>
+
+            <!-- Screen Selector -->
+            <div v-if="screens.length > 1" class="screen-tabs">
+                <div v-for="(s, idx) in screens" :key="s.id" class="screen-tab"
+                    :class="{ active: currentScreenIndex === idx }" @click="currentScreenIndex = idx">
+                    {{ s.name }}
+                </div>
+            </div>
+
+            <main class="main-view">
+                <!-- Graphical Console View -->
+                <organ-screen v-if="currentScreen" :screen="currentScreen"></organ-screen>
+
+                <!-- Fallback List View -->
+                <div v-else-if="organData" class="fallback-view">
+                    <template v-for="manual in organData.manuals" :key="manual.id">
+                        <div v-if="getManualStops(manual).length > 0" class="manual-group font-cinzel">
+                            {{ manual.name }}
+                        </div>
+                        <div v-for="stopId in manual.stopIds" :key="stopId" class="stop-btn"
+                            :class="{ active: activatedStops.includes(stopId) }" @click="organStore.toggleStop(stopId)">
+                            <div>{{ organData.stops[stopId]?.name }}</div>
+                            <div v-if="organData.stops[stopId]?.pitch" class="stop-pitch">
+                                {{ organData.stops[stopId]?.pitch }}
+                            </div>
+                        </div>
+                    </template>
+                </div>
+
+                <div v-else
+                    style="display: flex; align-items: center; justify-content: center; height: 100%; opacity: 0.5;">
+                    No organ loaded in the main app.
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <script>
+        const { createApp, ref, computed, onMounted, reactive } = Vue;
+
+        const options = {
+            moduleCache: {
+                vue: Vue
+            },
+            async getFile(url) {
+                const res = await fetch(url);
+                if (!res.ok) throw Object.assign(new Error(res.statusText + ' ' + url), { res });
+                return {
+                    getContentData: (asBinary) => asBinary ? res.arrayBuffer() : res.text(),
+                }
+            },
+            addStyle(textContent) {
+                const style = Object.assign(document.createElement('style'), { textContent });
+                const ref = document.head.getElementsByTagName('style')[0] || null;
+                document.head.insertBefore(style, ref);
+            },
+        };
+
+        const app = createApp({
+            setup() {
+                const loading = ref(true);
+                const connected = ref(false);
+                const organData = ref(null);
+                const screens = ref([]);
+                const currentScreenIndex = ref(0);
+                const activatedStops = ref([]);
+
+                // Mock store to satisfy OrganScreen.vue
+                const organStore = reactive({
+                    currentCombination: computed(() => activatedStops.value),
+                    toggleStop(stopId) {
+                        if (ws && ws.readyState === WebSocket.OPEN) {
+                            ws.send(JSON.stringify({ type: 'toggleStop', stopId }));
+                        }
+                    }
+                });
+
+                // Provide the store globally for SFC loader shim
+                window.remoteOrganStore = organStore;
+                app.provide('organStore', organStore);
+
+                const currentScreen = computed(() => {
+                    return screens.value[currentScreenIndex.value] || null;
+                });
+
+                let ws;
+                function connect() {
+                    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                    ws = new WebSocket(`${protocol}//${window.location.host}`);
+
+                    ws.onopen = () => {
+                        connected.value = true;
+                        loading.value = false;
+                    };
+
+                    ws.onclose = () => {
+                        connected.value = false;
+                        setTimeout(connect, 2000);
+                    };
+
+                    ws.onmessage = (event) => {
+                        const data = JSON.parse(event.data);
+                        if (data.type === 'init' || data.type === 'update') {
+                            if (data.organData) organData.value = data.organData;
+                            if (data.screens) screens.value = data.screens;
+                            if (data.activeScreenIndex !== undefined && !organData.value?.manuallySwitched) {
+                                currentScreenIndex.value = data.activeScreenIndex;
+                            }
+                            activatedStops.value = data.activatedStops || [];
+                        }
+                    };
+                }
+
+                onMounted(() => {
+                    connect();
+                });
+
+                const getManualStops = (manual) => {
+                    if (!organData.value) return [];
+                    return (manual.stopIds || []).map(id => organData.value.stops[id]).filter(Boolean);
+                };
+
+                return {
+                    loading,
+                    connected,
+                    organData,
+                    screens,
+                    currentScreenIndex,
+                    currentScreen,
+                    activatedStops,
+                    organStore,
+                    getManualStops
+                };
+            }
+        });
+
+        // SHIM: Provide a global useOrganStore-like function if needed by components
+        // In the SFC, it does: import { useOrganStore } from 'src/stores/organ';
+        // We need to handle this in the getFile or through options.pathMap
+
+        options.pathMap = {
+            'vue': Vue,
+            'src/stores/organ': {
+                useOrganStore: () => window.remoteOrganStore
+            },
+            '../../src-electron/utils/odf-parser': {}, // Shim for types
+            'src-electron/utils/odf-parser': {}
+        };
+
+        // Load OrganScreen.vue component dynamically
+        app.component('organ-screen', Vue.defineAsyncComponent(() => window['vue3-sfc-loader'].loadModule('/OrganScreen.vue', options)));
+
+        app.mount('#app');
+    </script>
+</body>
+
+</html>

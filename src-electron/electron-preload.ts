@@ -39,6 +39,22 @@ contextBridge.exposeInMainWorld('myApi', {
     deleteOrganFiles: (path: string) => ipcRenderer.invoke('delete-organ-files', path),
     triggerGC: () => ipcRenderer.invoke('trigger-gc'),
 
+    // Remote Control
+    startWebServer: (port: number) => ipcRenderer.invoke('start-web-server', port),
+    stopWebServer: () => ipcRenderer.invoke('stop-web-server'),
+    getWebServerStatus: () => ipcRenderer.invoke('get-web-server-status'),
+    updateRemoteState: (state: any) => ipcRenderer.invoke('update-remote-state', state),
+    onRemoteToggleStop: (callback: (event: any, stopId: string) => void) => {
+        const listener = (event: any, stopId: string) => callback(event, stopId);
+        ipcRenderer.on('remote-toggle-stop', listener);
+        return () => ipcRenderer.removeListener('remote-toggle-stop', listener);
+    },
+    onRemoteClearCombination: (callback: (event: any) => void) => {
+        const listener = (event: any) => callback(event);
+        ipcRenderer.on('remote-clear-combination', listener);
+        return () => ipcRenderer.removeListener('remote-clear-combination', listener);
+    },
+
     // Updates
 
     checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),

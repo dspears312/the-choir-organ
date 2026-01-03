@@ -15,6 +15,7 @@ import { handleRarExtraction } from './utils/archive-handler';
 import { scanOrganDependencies } from './utils/organ-manager';
 import { createPartialWav } from './utils/partial-wav';
 import { checkAndPromptForSelfRepair, performSelfRepair } from './utils/self-signer';
+import { startWebServer, stopWebServer, getWebServerStatus, updateRemoteState } from './utils/web-server';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const __filename = fileURLToPath(import.meta.url);
@@ -742,6 +743,23 @@ ipcMain.handle('open-external-url', async (event, url) => {
 
 ipcMain.handle('quit-and-install', () => {
   autoUpdater.quitAndInstall();
+});
+
+// WebServer Handlers
+ipcMain.handle('start-web-server', (event, port) => {
+  return startWebServer(port);
+});
+
+ipcMain.handle('stop-web-server', () => {
+  return stopWebServer();
+});
+
+ipcMain.handle('get-web-server-status', () => {
+  return getWebServerStatus();
+});
+
+ipcMain.handle('update-remote-state', (event, { organData, activatedStops }) => {
+  updateRemoteState(organData, activatedStops);
 });
 
 // AutoUpdater Events

@@ -38,7 +38,7 @@
                     <div class="ram-indicator row items-center q-gutter-x-sm" v-if="ramUsage > 0">
                         <q-icon name="memory" :style="{ color: ramColor }" size="16px" />
                         <span class="text-caption font-cinzel" :style="{ color: ramColor }">RAM: {{ formattedRam
-                        }}</span>
+                            }}</span>
                         <q-tooltip class="bg-grey-10 text-white shadow-4">
                             App Memory Usage: {{ formattedRam }}
                         </q-tooltip>
@@ -244,6 +244,28 @@
                     <!-- Bottom Action Area (Export) -->
                     <div class="q-pa-md q-pb-lg bg-dark-sidebar border-top-amber column shadow-up-10"
                         style="z-index: 5;">
+
+                        <!-- Remote Control Section -->
+                        <div class="remote-control-area column q-mb-md">
+                            <div class="text-overline text-amber-9" style="line-height: 1">Remote Control</div>
+                            <div class="row items-center justify-between q-mt-xs">
+                                <div class="column">
+                                    <div class="text-caption"
+                                        :class="organStore.remoteServerStatus.running ? 'text-green' : 'text-grey-6'">
+                                        {{ organStore.remoteServerStatus.running ? 'Server Running' : 'Server Stopped'
+                                        }}
+                                    </div>
+                                    <div v-if="organStore.remoteServerStatus.running" class="text-xs text-amber-7">
+                                        {{ organStore.remoteServerStatus.ips[0] }}:{{ organStore.remoteServerStatus.port
+                                        }}
+                                    </div>
+                                </div>
+                                <q-btn :color="organStore.remoteServerStatus.running ? 'red-9' : 'green-9'"
+                                    :label="organStore.remoteServerStatus.running ? 'Stop' : 'Start'" dense unelevated
+                                    class="q-px-sm text-caption" @click="organStore.toggleRemoteServer" />
+                            </div>
+                        </div>
+
                         <div class="text-overline text-amber-9" style="line-height: 1">Tsunami Export</div>
 
                         <div class="q-gutter-y-sm">
@@ -526,7 +548,7 @@
                 <q-card-section>
                     <div class="text-h6 font-cinzel text-amber">Render Recording</div>
                     <div class="text-caption text-grey-5 q-mb-md">Choose rendering mode for "{{ selectedRecording?.name
-                        }}"
+                    }}"
                     </div>
 
                     <q-list dark>
@@ -649,6 +671,8 @@ onMounted(async () => {
     if (organPath && (!organStore.organData || organStore.organData.sourcePath !== organPath)) {
         await organStore.loadOrgan(organPath);
     }
+
+    organStore.initRemoteSync();
 
     window.myApi.onRenderProgress((_event, data) => {
         // data can be just a number (from render-bank) or object (from render-performance)
