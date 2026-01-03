@@ -9,6 +9,7 @@
   "scripts": {
     "dev": "quasar dev -m electron",
     "build": "quasar build -m electron",
+    "corrupt": "xattr -w com.apple.quarantine \"0081;64a5196e;Chrome;39082C96-5743-4Cbf-8D82-2F1D06900000\" \"dist/electron/Packaged/mac-universal/The Choir Organ.app\" && codesign --remove-signature \"dist/electron/Packaged/mac-universal/The Choir Organ.app\"",
     "postinstall": "quasar prepare"
   },
   "dependencies": {

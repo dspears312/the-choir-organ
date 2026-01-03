@@ -14,6 +14,7 @@ import { addToRecent, getRecents, saveOrganState, loadOrganState, removeFromRece
 import { handleRarExtraction } from './utils/archive-handler';
 import { scanOrganDependencies } from './utils/organ-manager';
 import { createPartialWav } from './utils/partial-wav';
+import { checkAndPromptForSelfRepair, performSelfRepair } from './utils/self-signer';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const __filename = fileURLToPath(import.meta.url);
@@ -255,6 +256,9 @@ autoUpdater.autoDownload = false; // We will let the user decide
 autoUpdater.autoInstallOnAppQuit = true;
 
 async function createWindow() {
+  // Check for self-repair need on startup
+  await checkAndPromptForSelfRepair(undefined);
+
   /**
    * Initial window options
    */
@@ -797,6 +801,25 @@ autoUpdater.on('update-available', (info: any) => {
 
 autoUpdater.on('update-not-available', (info: any) => {
   mainWindow?.webContents.send('update-not-available', info);
+});
+
+// Self-Repair Handler
+ipcMain.handle('trigger-self-repair', async () => {
+  const response = await dialog.showMessageBox({
+    type: 'question',
+    title: 'Repair Application Signature',
+    message: 'This will close the application, remove Apple quarantine attributes, and re-sign the application bundle locally.',
+    detail: 'The application will restart automatically when finished.',
+    buttons: ['Proceed', 'Cancel'],
+    defaultId: 0,
+    cancelId: 1
+  });
+
+  if (response.response === 0) {
+    performSelfRepair();
+    return { success: true };
+  }
+  return { canceled: true };
 });
 
 autoUpdater.on('download-progress', (progressObj: any) => {
