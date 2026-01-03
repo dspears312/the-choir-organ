@@ -38,7 +38,7 @@
                     <div class="ram-indicator row items-center q-gutter-x-sm" v-if="ramUsage > 0">
                         <q-icon name="memory" :style="{ color: ramColor }" size="16px" />
                         <span class="text-caption font-cinzel" :style="{ color: ramColor }">RAM: {{ formattedRam
-                            }}</span>
+                        }}</span>
                         <q-tooltip class="bg-grey-10 text-white shadow-4">
                             App Memory Usage: {{ formattedRam }}
                         </q-tooltip>
@@ -526,7 +526,7 @@
                 <q-card-section>
                     <div class="text-h6 font-cinzel text-amber">Render Recording</div>
                     <div class="text-caption text-grey-5 q-mb-md">Choose rendering mode for "{{ selectedRecording?.name
-                    }}"
+                        }}"
                     </div>
 
                     <q-list dark>
@@ -566,7 +566,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
-import { useRouter } from 'vue-router';
+import { useRouter, useRoute } from 'vue-router';
 import { useOrganStore } from 'src/stores/organ';
 import Drawknob from 'src/components/Drawknob.vue';
 import OrganScreen from 'src/components/OrganScreen.vue';
@@ -578,6 +578,7 @@ const $q = useQuasar();
 
 const organStore = useOrganStore();
 const router = useRouter();
+const route = useRoute();
 const selectedBank = ref(-1);
 const activeTab = ref('basic');
 const showRecordingsDrawer = ref(false);
@@ -642,7 +643,13 @@ async function confirmRenderRecording() {
     }
 }
 
-onMounted(() => {
+onMounted(async () => {
+    // Check if we need to load an organ from query params
+    const organPath = route.query.organ as string;
+    if (organPath && (!organStore.organData || organStore.organData.sourcePath !== organPath)) {
+        await organStore.loadOrgan(organPath);
+    }
+
     window.myApi.onRenderProgress((_event, data) => {
         // data can be just a number (from render-bank) or object (from render-performance)
         // Check electron-main.ts:

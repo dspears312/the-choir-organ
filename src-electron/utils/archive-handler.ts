@@ -1,10 +1,10 @@
-import { Worker } from 'worker_threads';
 import fs from 'fs';
 import path from 'path';
 import { app, BrowserWindow } from 'electron';
 import crypto from 'crypto';
 import { addToRecent } from './persistence';
 import { fileURLToPath } from 'url';
+import { WorkerFactory } from './worker-factory';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -68,8 +68,6 @@ export async function handleRarExtraction(filePaths: string[], mainWindow: Brows
                 if (msg.type === 'progress') {
                     // Estimate progress: unpSize is not directly comparable to compressed size, 
                     // but we can use the worker's own local progress and weight it.
-                    // Wait, let's have the worker report its local percentage or we use unpSize ratios.
-                    // Actually, if we use the worker's start totalUnpSize, we can do it accurately.
                     if (msg.localProgress !== undefined) {
                         const weightedProgress = ((bytesExtractedBeforeCurrent + (msg.localProgress * currentArchiveSize / 100)) / totalBatchSize) * 100;
                         mainWindow.webContents.send('extraction-progress', {
@@ -96,53 +94,10 @@ export async function handleRarExtraction(filePaths: string[], mainWindow: Brows
     return allFoundOdfs.length > 0 ? (allFoundOdfs[0] || null) : null;
 }
 
-function extractInWorker(primary: string, targetDir: string, wasmBinary: ArrayBuffer, onMessage: (msg: any) => void): Promise<void> {
-    return new Promise((resolve, reject) => {
-        // Resolve worker path relative to this file
-        // In dev (electron-main.js in .quasar/dev-electron), we look for rar-worker.js in the same dir
-        // In prod, it should also be alongside
-        let workerPath = path.join(__dirname, 'rar-worker.js');
-
-        if (!fs.existsSync(workerPath)) {
-            // Fallback for dev if the above fails - look in the source dir or relative to appPath
-            const altPath = path.resolve('src-electron/utils/rar-worker.js');
-            if (fs.existsSync(altPath)) {
-                workerPath = altPath;
-            } else {
-                // Last ditch effort: check if it's still .ts and try to use it (though hopefully avoided)
-                const tsPath = path.join(__dirname, 'rar-worker.ts');
-                if (fs.existsSync(tsPath)) {
-                    workerPath = tsPath;
-                }
-            }
-        }
-
-        console.log(`[ArchiveHandler] Spawning worker: ${workerPath}`);
-
-        const worker = new Worker(workerPath, {
-            workerData: { primary, targetDir, wasmBinary },
-            execArgv: workerPath.endsWith('.ts') ? ['--loader', 'ts-node/esm'] : []
-        });
-
-        worker.on('message', (msg) => {
-            if (msg.type === 'progress') {
-                onMessage(msg);
-            } else if (msg.type === 'done') {
-                resolve();
-            } else if (msg.type === 'error') {
-                reject(new Error(msg.error));
-            }
-        });
-
-        worker.on('error', (err) => {
-            reject(err);
-        });
-
-        worker.on('exit', (code) => {
-            if (code !== 0) {
-                reject(new Error(`Worker stopped with exit code ${code}`));
-            }
-        });
+async function extractInWorker(primary: string, targetDir: string, wasmBinary: ArrayBuffer, onMessage: (msg: any) => void): Promise<void> {
+    await WorkerFactory.spawn('rar-worker', {
+        workerData: { primary, targetDir, wasmBinary },
+        onMessage
     });
 }
 

@@ -25,6 +25,20 @@
                 </q-card>
             </q-dialog>
 
+            <!-- Loading Organ Overlay -->
+            <q-dialog v-model="organStore.isLoadingOrgan" persistent transition-show="scale" transition-hide="scale">
+                <q-card dark style="width: 400px; background: rgba(20, 20, 20, 0.95); border: 1px solid #d4af37;"
+                    class="q-pa-lg shadow-24">
+                    <q-card-section class="column items-center">
+                        <q-spinner-gears color="amber-7" size="64px" class="q-mb-md" />
+                        <div class="text-h5 font-cinzel text-amber-8 q-mb-sm">Loading Organ</div>
+                        <div class="text-caption text-grey-5 text-center">Reading organ definition and preparing
+                            console...
+                        </div>
+                    </q-card-section>
+                </q-card>
+            </q-dialog>
+
             <!-- Unified Management Dialog -->
             <q-dialog v-model="isInfoDialogVisible">
                 <q-card dark style="width: 500px; background: rgba(30, 30, 30, 0.95); border: 1px solid #444;"
@@ -151,7 +165,10 @@ function getDisplayName(path: string) {
 // Redirect to builder if organ is loaded
 function checkRedirect() {
     if (organStore.organData) {
-        router.push('/builder');
+        router.push({
+            path: '/builder',
+            query: { organ: organStore.organData.sourcePath }
+        });
     }
 }
 
@@ -235,7 +252,10 @@ onMounted(() => {
 
 watch(() => organStore.organData, (newData) => {
     if (newData) {
-        router.push('/builder');
+        router.push({
+            path: '/builder',
+            query: { organ: newData.sourcePath }
+        });
     }
 });
 </script>

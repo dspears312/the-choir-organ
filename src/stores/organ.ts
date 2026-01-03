@@ -65,6 +65,7 @@ export const useOrganStore = defineStore('organ', {
         isExtracting: false,
         extractionProgress: 0,
         extractionFile: '',
+        isLoadingOrgan: false,
         midiListener: null as ((event: any) => void) | null,
 
         // Recording State
@@ -99,7 +100,9 @@ export const useOrganStore = defineStore('organ', {
             let data;
             if (path && typeof path === 'string') {
                 data = await (window as any).myApi.selectOdfFile(path);
+                this.isLoadingOrgan = true;
             } else {
+                this.isLoadingOrgan = true;
                 this.isExtracting = false;
                 this.extractionProgress = 0;
                 this.extractionFile = '';
@@ -164,9 +167,8 @@ export const useOrganStore = defineStore('organ', {
                 this.fetchDrives();
                 if (this.drivePollInterval) clearInterval(this.drivePollInterval);
                 this.drivePollInterval = setInterval(() => this.fetchDrives(), 5000);
-            } else if (data?.error) {
-                console.error(data.error);
             }
+            this.isLoadingOrgan = false;
             setTimeout(() => { this.isRestoring = false; }, 100);
         },
 

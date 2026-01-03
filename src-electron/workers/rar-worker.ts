@@ -5,7 +5,6 @@ import fs from 'fs';
 /**
  * Worker thread for RAR extraction.
  * Communicates progress back to the main thread.
- * Plain JS version to avoid ts-node issues in dev.
  */
 
 async function main() {
@@ -54,7 +53,7 @@ async function main() {
             type: 'done',
             targetDir
         });
-    } catch (err) {
+    } catch (err: any) {
         console.error(`[RarWorker] Failed:`, err);
         parentPort?.postMessage({
             type: 'error',

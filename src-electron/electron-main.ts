@@ -1,5 +1,5 @@
 import { app, BrowserWindow, ipcMain, dialog, protocol, net, shell } from 'electron';
-import { Worker } from 'worker_threads';
+import { WorkerFactory } from './utils/worker-factory';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -343,11 +343,11 @@ ipcMain.handle('select-odf-file', async (event, specificPath?: string) => {
     }
 
     addToRecent(filePath);
-    if (filePath.toLowerCase().endsWith('.xml') || filePath.toLowerCase().includes('_hauptwerk_xml')) {
-      return parseHauptwerk(filePath);
-    } else {
-      return parseODF(filePath);
-    }
+
+    // Offload parsing to worker thread to avoid hanging UI
+    return await WorkerFactory.spawn('parser-worker', {
+      workerData: { filePath: filePath }
+    });
   } catch (e: any) {
     console.error(e);
     return { error: e.message };
@@ -485,66 +485,16 @@ ipcMain.handle('render-performance', async (event, { recording, organData, rende
   }
 
   try {
-    // Determine Worker Path
-    // In dev: src-electron/workers/render-worker.ts (requires ts-node)
-    // In prod: workers/render-worker.js (if built) - or we might need to rely on the main bundle if configured?
-    // For now, attempting to load the TS file in dev using ts-node/register via execArgv if possible, 
-    // or relying on Quasar's build handling if it picks up the file. 
-    // Given no ts-node in project deps, we might need a different approach if this fails, but let's try the standard pattern first.
-
-    // Determine Worker Path
-    // Debug Paths
-    console.log('CWD:', process.cwd());
-    console.log('__dirname:', __dirname);
-
-    let workerPath = path.join(__dirname, 'workers/render-worker.js'); // Default to Prod/Built
-
-    // In Dev, we expect src-electron/workers/render-worker.ts
-    // We try to resolve it relative to CWD (Project Root)
-    const devWorkerPath = path.join(process.cwd(), 'src-electron/workers/render-worker.ts');
-
-    console.log('Checking Dev Worker Path:', devWorkerPath);
-    if (fs.existsSync(devWorkerPath)) {
-      console.log('Found Dev Worker:', devWorkerPath);
-      workerPath = devWorkerPath;
-    } else {
-      console.log('Dev Worker not found, using default:', workerPath);
-    }
-
-    await new Promise((resolve, reject) => {
-      const worker = new Worker(workerPath, {
-        workerData: {
-          recording,
-          organData,
-          outputPath: result.filePath,
-          renderTails
-        },
-        // Use ts-node loader with experimental resolution for extensionless imports in TS
-        execArgv: workerPath.endsWith('.ts') ?
-          ['--loader', 'ts-node/esm', '--experimental-specifier-resolution=node', '--no-warnings', ''] :
-          undefined,
-        env: {
-          TS_NODE_TRANSPILE_ONLY: 'true'
-        }
-      });
-
-      worker.on('message', (msg) => {
-        if (msg.type === 'progress') {
-          mainWindow?.webContents.send('render-progress', { status: 'Rendering Performance...', progress: msg.progress });
-        } else if (msg.type === 'success') {
-          resolve(msg.filePath);
-        } else if (msg.type === 'error') {
-          reject(new Error(msg.error));
-        }
-      });
-
-      worker.on('error', (err) => {
-        console.error('Worker Error:', err);
-        reject(err);
-      });
-      worker.on('exit', (code) => {
-        if (code !== 0) reject(new Error(`Worker stopped with exit code ${code}`));
-      });
+    await WorkerFactory.spawn('render-worker', {
+      workerData: {
+        recording,
+        organData,
+        outputPath: result.filePath,
+        renderTails
+      },
+      onProgress: (progress) => {
+        mainWindow?.webContents.send('render-progress', { status: 'Rendering Performance...', progress });
+      }
     });
 
     mainWindow?.webContents.send('render-progress', { status: 'Complete', progress: 100 });
