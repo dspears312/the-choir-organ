@@ -1,29 +1,29 @@
 <template>
   <q-page class="tsunami-preview-page text-white column no-wrap">
-    <!-- Header (Aligned with IndexPage) -->
-    <div class="console-header row items-center justify-between q-py-md q-px-md col-auto">
-      <div class="row items-center">
+    <!-- Toolbar Portal -->
+    <Teleport to="#main-toolbar-portal">
+      <div class="row no-wrap items-center col">
         <q-btn flat round icon="arrow_back" color="grey-6" @click="$router.push('/')" class="q-mr-md" />
-        <div class="text-h4 font-cinzel text-amber-8 text-shadow">Tsunami Board Preview</div>
-      </div>
+        <div class="text-h6 font-cinzel text-amber-8 text-shadow q-mr-lg gt-sm">Tsunami Board Preview</div>
 
-      <div class="row items-center q-gutter-x-lg">
-        <!-- Standardized MIDI Status -->
-        <div id="midi-status-preview" class="status-indicator row items-center q-gutter-x-xs cursor-pointer hover-opacity-100 q-mr-sm"
-          @click="organStore.initMIDI" :class="{ 'opacity-50': organStore.midiStatus !== 'Connected' }">
-          <q-icon name="circle" :color="midiStatusColor" size="12px" />
-          <span class="text-caption text-uppercase tracking-wide">MIDI {{ organStore.midiStatus }}</span>
-          <q-tooltip class="bg-grey-10 text-amber shadow-4">
-            <div v-if="organStore.midiStatus === 'Connected'">MIDI Connected & Ready</div>
-            <div v-else-if="organStore.midiStatus === 'Error'">
-              <strong>MIDI Error:</strong> {{ organStore.midiError || 'Unknown Error' }}<br />
-              Click to retry connection
-            </div>
-            <div v-else>MIDI Disconnected. Click to retry connection.</div>
-          </q-tooltip>
+        <div class="row items-center q-gutter-x-lg">
+          <div id="midi-status-preview"
+            class="status-indicator row items-center q-gutter-x-xs cursor-pointer hover-opacity-100"
+            @click="organStore.initMIDI" :class="{ 'opacity-50': organStore.midiStatus !== 'Connected' }">
+            <q-icon name="circle" :color="midiStatusColor" size="12px" />
+            <span class="text-caption text-uppercase tracking-wide">MIDI {{ organStore.midiStatus }}</span>
+            <q-tooltip class="bg-grey-10 text-amber shadow-4">
+              <div v-if="organStore.midiStatus === 'Connected'">MIDI Connected & Ready</div>
+              <div v-else-if="organStore.midiStatus === 'Error'">
+                <strong>MIDI Error:</strong> {{ organStore.midiError || 'Unknown Error' }}<br />
+                Click to retry connection
+              </div>
+              <div v-else>MIDI Disconnected. Click to retry connection.</div>
+            </q-tooltip>
+          </div>
         </div>
       </div>
-    </div>
+    </Teleport>
 
     <!-- Main Body (Flex Row) -->
     <div class="console-body col row no-wrap overflow-hidden">
@@ -141,7 +141,7 @@
                 <div class="text-h4 text-amber-8 font-cinzel q-mb-xs">Real-time Note Monitor</div>
                 <div class="text-caption text-grey-7" v-if="folderPath">
                   Monitoring: <span class="text-amber">{{ bankNames[selectedBank] || `Bank ${selectedBank}`
-                    }}</span>
+                  }}</span>
                   <span class="q-ml-sm opacity-50">(On-Demand Loading)</span>
                 </div>
               </div>

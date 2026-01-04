@@ -106,8 +106,6 @@ async function handleCommand(cmd: any) {
         case 'set-release-mode':
             log(`Setting release mode: ${cmd.mode}`);
             synth.setReleaseMode(cmd.mode);
-            // Backward compatibility until SynthClient is updated fully
-            // (setReleaseMode handles internal useReleaseSamples flag)
             break;
         case 'configure-reverb':
             log(`Configuring reverb: Length=${cmd.length}, Mix=${cmd.mix}`);

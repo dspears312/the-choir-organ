@@ -15,7 +15,7 @@ import { handleRarExtraction } from './utils/archive-handler';
 import { scanOrganDependencies } from './utils/organ-manager';
 import { createPartialWav } from './utils/partial-wav';
 import { checkAndPromptForSelfRepair, performSelfRepair } from './utils/self-signer';
-import { startWebServer, stopWebServer, getWebServerStatus, updateRemoteState } from './utils/web-server';
+import { startWebServer, stopWebServer, getWebServerStatus, updateRemoteState, setMainWindow } from './utils/web-server';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const __filename = fileURLToPath(import.meta.url);
@@ -297,6 +297,10 @@ async function createWindow() {
     width: 1200,
     height: 800,
     useContentSize: true,
+    frame: false,
+    titleBarStyle: 'hidden',
+    trafficLightPosition: { x: 18, y: 18 },
+    fullscreen: !process.env.DEV,
     webPreferences: {
       contextIsolation: true,
       // More info: https://v2.quasar.dev/quasar-cli-vite/developing-electron-apps/electron-preload-script
@@ -306,6 +310,9 @@ async function createWindow() {
       ),
     },
   });
+
+  // Provide web-server with the correct main window reference
+  setMainWindow(mainWindow);
 
   if (process.env.DEV) {
     await mainWindow.loadURL(process.env.APP_URL);
@@ -334,6 +341,22 @@ async function createWindow() {
     }
   });
 
+  // Window Controls
+  ipcMain.on('window-minimize', () => {
+    mainWindow?.minimize();
+  });
+
+  ipcMain.on('window-toggle-maximize', () => {
+    if (mainWindow?.isMaximized()) {
+      mainWindow.unmaximize();
+    } else {
+      mainWindow?.maximize();
+    }
+  });
+
+  ipcMain.on('window-close', () => {
+    mainWindow?.close();
+  });
 }
 
 // IPC Handlers
@@ -933,8 +956,8 @@ ipcMain.handle('get-web-server-status', () => {
   return getWebServerStatus();
 });
 
-ipcMain.handle('update-remote-state', (event, { organData, activatedStops }) => {
-  updateRemoteState(organData, activatedStops);
+ipcMain.handle('update-remote-state', (event, { organData, activatedStops, ...extra }) => {
+  updateRemoteState(organData, activatedStops, extra);
 });
 
 // AutoUpdater Events

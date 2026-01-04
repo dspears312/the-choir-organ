@@ -39,6 +39,13 @@ export function getLocalIPs(): string[] {
     return ips;
 }
 
+export let mainWindowInstance: BrowserWindow | null = null;
+
+export function setMainWindow(win: BrowserWindow) {
+    mainWindowInstance = win;
+    console.log('[WebRemote] Main window reference updated');
+}
+
 export function startWebServer(port: number = 8080) {
     if (server) {
         console.log('[WebRemote] Server instance already exists, forcing stop first');
@@ -163,7 +170,8 @@ export function startWebServer(port: number = 8080) {
                 organData: currentOrganData,
                 activatedStops: currentActivatedStops,
                 screens: currentOrganData?.screens || [],
-                activeScreenIndex: currentOrganData?.activeScreenIndex || 0
+                activeScreenIndex: currentOrganData?.activeScreenIndex || 0,
+                ...currentExtraState
             });
 
             ws.send(initState, (err) => {
@@ -177,15 +185,24 @@ export function startWebServer(port: number = 8080) {
                     console.log(`[WebRemote][Instance ${currentId}] Received message:`, data.type);
                     if (data.type === 'toggleStop') {
                         // Forward to renderer
-                        const mainWindow = BrowserWindow.getAllWindows()[0];
-                        if (mainWindow) {
-                            mainWindow.webContents.send('remote-toggle-stop', data.stopId);
+                        if (mainWindowInstance && !mainWindowInstance.isDestroyed()) {
+                            mainWindowInstance.webContents.send('remote-toggle-stop', data.stopId);
+                        } else {
+                            console.warn(`[WebRemote][Instance ${currentId}] Cannot forward toggleStop: Main window not ready`);
                         }
                     } else if (data.type === 'clearCombination') {
                         // Forward to renderer
-                        const mainWindow = BrowserWindow.getAllWindows()[0];
-                        if (mainWindow) {
-                            mainWindow.webContents.send('remote-clear-combination');
+                        if (mainWindowInstance && !mainWindowInstance.isDestroyed()) {
+                            mainWindowInstance.webContents.send('remote-clear-combination');
+                        } else {
+                            console.warn(`[WebRemote][Instance ${currentId}] Cannot forward clearCombination: Main window not ready`);
+                        }
+                    } else if (['loadBank', 'saveToBank', 'addBank', 'deleteBank', 'moveBank', 'deleteRecording', 'setStopVolume', 'toggleRecording'].includes(data.type)) {
+                        // Forward generic commands to renderer
+                        if (mainWindowInstance && !mainWindowInstance.isDestroyed()) {
+                            mainWindowInstance.webContents.send(`remote-${data.type}`, data);
+                        } else {
+                            console.warn(`[WebRemote][Instance ${currentId}] Cannot forward ${data.type}: Main window not ready`);
                         }
                     }
                 } catch (e) {
@@ -250,11 +267,14 @@ export function stopWebServer() {
     };
 }
 
-export function updateRemoteState(organData: any, activatedStops: string[]) {
+let currentExtraState: any = {};
+
+export function updateRemoteState(organData: any, activatedStops: string[], extra: any = {}) {
     const currentId = serverInstanceId;
     console.log(`[WebRemote][Instance ${currentId}] Updating state. Organ:`, organData?.name, 'Stops:', activatedStops?.length);
     currentOrganData = organData;
     currentActivatedStops = activatedStops;
+    currentExtraState = extra;
 
     if (wss) {
         const message = JSON.stringify({
@@ -262,7 +282,8 @@ export function updateRemoteState(organData: any, activatedStops: string[]) {
             organData: currentOrganData,
             activatedStops: currentActivatedStops,
             screens: currentOrganData?.screens || [],
-            activeScreenIndex: currentOrganData?.activeScreenIndex || 0
+            activeScreenIndex: currentOrganData?.activeScreenIndex || 0,
+            ...currentExtraState
         });
         wss.clients.forEach((client: any) => {
             if (client.readyState === 1) { // WebSocket.OPEN

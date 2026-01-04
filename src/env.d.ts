@@ -63,6 +63,14 @@ export interface IElectronAPI {
   onWorkerReady: (callback: (workerIndex: number) => void) => () => void;
   sendSampleLoaded: (data: any) => void;
   onSampleLoaded: (callback: (event: any, data: any) => void) => () => void;
+  onSampleLoadedBatch: (callback: (event: any, count: number) => void) => () => void;
+  resetProgressBuffer: () => Promise<void>;
+
+  // Window Controls
+  platform: string;
+  minimize: () => void;
+  toggleMaximize: () => void;
+  close: () => void;
 }
 
 declare global {

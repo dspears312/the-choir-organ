@@ -12,7 +12,7 @@
       </div>
     </div>
 
-    <div class="volume-control q-mt-sm">
+    <div v-if="!hideVolume" class="volume-control q-mt-sm">
       <q-slider :model-value="volume" @update:model-value="$emit('update:volume', $event)" :min="0" :max="200" :step="1"
         dense :color="isVirtual ? 'green' : 'amber'" class="volume-slider" />
     </div>
@@ -30,6 +30,7 @@ const props = defineProps<{
   volume: number;
   isVirtual?: boolean;
   classification?: StopClassification;
+  hideVolume?: boolean;
 }>();
 
 defineEmits(['toggle', 'update:volume', 'delete']);

@@ -52,12 +52,16 @@ interface UserSettings {
     recentOdfs: string[];
     lastExportDir: string;
     workerCount: number;
+    isWebServerEnabled?: boolean;
+    remoteServerPort?: number;
 }
 
 const DEFAULT_SETTINGS: UserSettings = {
     recentOdfs: [],
     lastExportDir: '',
-    workerCount: 1
+    workerCount: 1,
+    isWebServerEnabled: false,
+    remoteServerPort: 8080
 };
 
 function getSettingsPath(): string {

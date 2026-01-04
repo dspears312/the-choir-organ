@@ -57,6 +57,46 @@ contextBridge.exposeInMainWorld('myApi', {
         ipcRenderer.on('remote-clear-combination', listener);
         return () => ipcRenderer.removeListener('remote-clear-combination', listener);
     },
+    onRemoteLoadBank: (callback: (event: any, data: any) => void) => {
+        const listener = (event: any, data: any) => callback(event, data);
+        ipcRenderer.on('remote-loadBank', listener);
+        return () => ipcRenderer.removeListener('remote-loadBank', listener);
+    },
+    onRemoteSaveToBank: (callback: (event: any, data: any) => void) => {
+        const listener = (event: any, data: any) => callback(event, data);
+        ipcRenderer.on('remote-saveToBank', listener);
+        return () => ipcRenderer.removeListener('remote-saveToBank', listener);
+    },
+    onRemoteAddBank: (callback: (event: any, data: any) => void) => {
+        const listener = (event: any, data: any) => callback(event, data);
+        ipcRenderer.on('remote-addBank', listener);
+        return () => ipcRenderer.removeListener('remote-addBank', listener);
+    },
+    onRemoteDeleteBank: (callback: (event: any, data: any) => void) => {
+        const listener = (event: any, data: any) => callback(event, data);
+        ipcRenderer.on('remote-deleteBank', listener);
+        return () => ipcRenderer.removeListener('remote-deleteBank', listener);
+    },
+    onRemoteMoveBank: (callback: (event: any, data: any) => void) => {
+        const listener = (event: any, data: any) => callback(event, data);
+        ipcRenderer.on('remote-moveBank', listener);
+        return () => ipcRenderer.removeListener('remote-moveBank', listener);
+    },
+    onRemoteDeleteRecording: (callback: (event: any, data: any) => void) => {
+        const listener = (event: any, data: any) => callback(event, data);
+        ipcRenderer.on('remote-deleteRecording', listener);
+        return () => ipcRenderer.removeListener('remote-deleteRecording', listener);
+    },
+    onRemoteSetStopVolume: (callback: (event: any, data: any) => void) => {
+        const listener = (event: any, data: any) => callback(event, data);
+        ipcRenderer.on('remote-setStopVolume', listener);
+        return () => ipcRenderer.removeListener('remote-setStopVolume', listener);
+    },
+    onRemoteToggleRecording: (callback: (event: any, data: any) => void) => {
+        const listener = (event: any, data: any) => callback(event, data);
+        ipcRenderer.on('remote-toggleRecording', listener);
+        return () => ipcRenderer.removeListener('remote-toggleRecording', listener);
+    },
 
     // Updates
 
@@ -135,5 +175,11 @@ contextBridge.exposeInMainWorld('myApi', {
         return () => ipcRenderer.removeListener('sample-loaded-batch', listener);
     },
     resetProgressBuffer: () => ipcRenderer.invoke('reset-progress-buffer'),
-    getProcessMemoryUsage: () => Promise.resolve(process.memoryUsage())
+    getProcessMemoryUsage: () => Promise.resolve(process.memoryUsage()),
+
+    // Window Controls
+    platform: process.platform,
+    minimize: () => ipcRenderer.send('window-minimize'),
+    toggleMaximize: () => ipcRenderer.send('window-toggle-maximize'),
+    close: () => ipcRenderer.send('window-close')
 });

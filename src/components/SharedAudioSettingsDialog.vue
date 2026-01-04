@@ -36,6 +36,9 @@
 
                     <q-separator dark class="q-mb-md" />
 
+
+                    <slot></slot>
+
                     <div class="text-subtitle2 text-grey-4">Release Tails Mode</div>
                     <div class="row q-gutter-sm q-mb-md">
                         <q-btn-toggle v-model="pendingSettings.releaseMode" spread class="col" no-caps
@@ -70,7 +73,7 @@
                         </div>
                         <div class="row items-center q-gutter-x-md">
                             <div class="text-caption text-grey-5">Mix ({{ Math.round(pendingSettings.reverbMix * 100)
-                                }}%)
+                            }}%)
                             </div>
                             <q-slider v-model="pendingSettings.reverbMix" :min="0" :max="1" :step="0.05"
                                 @update:model-value="reverbPreset = 'custom'" color="amber" class="col" />
@@ -129,7 +132,7 @@
                                     <q-item-section>
                                         <q-item-label class="text-amber-1">{{ rank.name }}</q-item-label>
                                         <q-item-label caption class="text-grey-5 text-tiny">ID: {{ rank.id
-                                            }}</q-item-label>
+                                        }}</q-item-label>
                                     </q-item-section>
                                 </q-item>
                             </div>

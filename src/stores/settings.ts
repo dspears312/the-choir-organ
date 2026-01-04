@@ -6,6 +6,8 @@ export const useSettingsStore = defineStore('settings', () => {
     const recentOdfs = ref<string[]>([]);
     const lastExportDir = ref<string>('');
     const workerCount = ref<number>(1);
+    const isWebServerEnabled = ref<boolean>(false);
+    const remoteServerPort = ref<number>(8080);
 
     // Actions
     async function loadSettings() {
@@ -14,20 +16,32 @@ export const useSettingsStore = defineStore('settings', () => {
             recentOdfs.value = settings.recentOdfs || [];
             lastExportDir.value = settings.lastExportDir || '';
             workerCount.value = settings.workerCount || 1;
+            isWebServerEnabled.value = settings.isWebServerEnabled || false;
+            remoteServerPort.value = settings.remoteServerPort || 8080;
         }
     }
 
-    async function saveSettings(newSettings: Partial<{ recentOdfs: string[], lastExportDir: string, workerCount: number }>) {
+    async function saveSettings(newSettings: Partial<{
+        recentOdfs: string[],
+        lastExportDir: string,
+        workerCount: number,
+        isWebServerEnabled: boolean,
+        remoteServerPort: number
+    }>) {
         // Optimistic update
         if (newSettings.recentOdfs) recentOdfs.value = newSettings.recentOdfs;
         if (newSettings.lastExportDir) lastExportDir.value = newSettings.lastExportDir;
         if (newSettings.workerCount) workerCount.value = newSettings.workerCount;
+        if (newSettings.isWebServerEnabled !== undefined) isWebServerEnabled.value = newSettings.isWebServerEnabled;
+        if (newSettings.remoteServerPort) remoteServerPort.value = newSettings.remoteServerPort;
 
         // Use JSON copy to ensure we send a plain object, stripping Proxies
         await window.myApi.saveUserSettings(JSON.parse(JSON.stringify({
             recentOdfs: recentOdfs.value,
             lastExportDir: lastExportDir.value,
-            workerCount: workerCount.value
+            workerCount: workerCount.value,
+            isWebServerEnabled: isWebServerEnabled.value,
+            remoteServerPort: remoteServerPort.value
         })));
     }
 
@@ -42,6 +56,8 @@ export const useSettingsStore = defineStore('settings', () => {
         recentOdfs,
         lastExportDir,
         workerCount,
+        isWebServerEnabled,
+        remoteServerPort,
         loadSettings,
         saveSettings,
         setWorkerCount

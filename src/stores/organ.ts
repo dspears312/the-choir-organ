@@ -2,58 +2,15 @@ import { defineStore } from 'pinia';
 import { markRaw } from 'vue';
 import { synthClient as synth } from '../services/synth-client';
 import { useSettingsStore } from './settings';
-
-export interface Bank {
-    id: string; // unique ID for reordering
-    name: string;
-    combination: string[];
-    stopVolumes: Record<string, number>;
-}
-
-export interface VirtualStop {
-    id: string;
-    originalStopId: string;
-    name: string;
-    pitch: string;
-    pitchShift: number; // in cents
-    harmonicMultiplier: number;
-    noteOffset: number;
-    volume?: number;
-    delay?: number; // in ms
-}
-
-export interface TimelineEvent {
-    timestamp: number;
-    type: 'noteOn' | 'noteOff' | 'stopOn' | 'stopOff';
-    note?: number;
-    stopId?: string;
-    velocity?: number;
-}
-
-// Advanced Audio Settings
-export interface OrganAudioSettings {
-    disabledRanks: string[]; // IDs of disabled ranks
-    releaseMode: 'authentic' | 'convolution' | 'none';
-    reverbMix: number; // 0-1
-    reverbLength: number; // seconds
-    loadingMode: 'none' | 'quick' | 'full';
-}
-
-const DEFAULT_AUDIO_SETTINGS: OrganAudioSettings = {
-    disabledRanks: [],
-    releaseMode: 'authentic',
-    reverbMix: 0.3,
-    reverbLength: 2.0,
-    loadingMode: 'none'
-};
-
-export interface RecordingSession {
-    id: string;
-    name: string;
-    date: number;
-    duration: number; // ms
-    events: TimelineEvent[];
-}
+import { useExportStore } from './export';
+import {
+    Bank,
+    VirtualStop,
+    TimelineEvent,
+    OrganAudioSettings,
+    RecordingSession,
+    DEFAULT_AUDIO_SETTINGS
+} from 'src/types/models';
 
 export const useOrganStore = defineStore('organ', {
     state: () => ({
@@ -62,27 +19,16 @@ export const useOrganStore = defineStore('organ', {
         stopVolumes: {} as Record<string, number>,
         globalVolume: 100, // 0-100%
         banks: [] as Bank[],
-        isRendering: false,
-        outputDir: '',
-        midiStatus: 'Disconnected' as 'Disconnected' | 'Connected' | 'Error',
-        useReleaseSamples: false,
-        activeMidiNotes: new Set<number>(),
-        recentFiles: [] as string[],
-        renderProgress: 0,
-        renderStatus: '',
-        midiAccess: null as MIDIAccess | null,
-        midiError: '' as string,
-        isSynthEnabled: true,
-        virtualStops: [] as VirtualStop[],
-        suppressDiskWarning: false,
-        isOutputRemovable: false,
-        availableDrives: [] as any[],
-        drivePollInterval: null as any,
-        isExtracting: false,
-        extractionProgress: 0,
         extractionFile: '',
         isLoadingOrgan: false,
         midiListener: null as ((event: any) => void) | null,
+
+        // MIDI State
+        midiStatus: 'Disconnected' as 'Connected' | 'Disconnected' | 'Error',
+        midiAccess: null as any,
+        midiError: '',
+        isSynthEnabled: true,
+        activeMidiNotes: new Set<number>(),
 
         // Recording State
         isRecording: false,
@@ -109,38 +55,28 @@ export const useOrganStore = defineStore('organ', {
         pendingLoadCount: 0,
         totalPreloadCount: 0,
         sampleLoadListener: null as (() => void) | null,
-        sampleProgressPollingInterval: null as any
+        sampleProgressPollingInterval: null as any,
+        drivePollInterval: null as any,
+
+        // UI / Progress
+        renderStatus: '',
+        isExtracting: false,
+        extractionProgress: 0,
+        recentFiles: [] as any[],
+        virtualStops: [] as VirtualStop[]
     }),
     getters: {
-        totalRamUsage: (state) => {
-            let total = 0;
-            // Add worker stats (Process RSS)
-            Object.values(state.workerStats).forEach((s: any) => {
-                total += s.processMemory?.rss || s.totalRamEstimateBytes || 0;
-            });
-            return total;
+        enabledStopIds(state): Set<string> {
+            if (!state.organData) return new Set();
+            return new Set(state.currentCombination);
         },
-        targetVolumeLabel: (state) => {
-            if (state.organData?.name) {
-                return state.organData.name;
-            }
-            return 'Global';
+        targetVolumeLabel(state): string {
+            if (!state.organData) return 'TCO';
+            const name = state.organData.name || 'Organ';
+            return name.substring(0, 11).toUpperCase().replace(/[^A-Z0-9]/g, '_');
         },
-        enabledStopIds: (state) => {
-            if (!state.organData) return new Set<string>();
-            const disabledRanksSet = new Set(state.audioSettings.disabledRanks);
-
-            // Filter stops that have at least one enabled rank
-            return new Set(Object.values(state.organData.stops)
-                .filter(stop => {
-                    // If stop has no ranks (e.g. virtual or strange ODF), keep it enabled? 
-                    // Usually stops have ranks. If no ranks, maybe it's a coupler (couplers usually different type but here stops).
-                    // If rankIds is empty, keep it.
-                    if (stop.rankIds.length === 0) return true;
-                    // Keep stop if AT LEAST ONE rank is NOT disabled.
-                    return stop.rankIds.some(rid => !disabledRanksSet.has(rid));
-                })
-                .map(s => s.id));
+        totalRamUsage(state): number {
+            return Object.values(state.workerStats).reduce((acc: number, stats: any) => acc + (stats.processMemory?.rss || 0), 0);
         }
     },
     actions: {
@@ -216,7 +152,7 @@ export const useOrganStore = defineStore('organ', {
 
             const sourcePath = this.organData.sourcePath;
             const organName = this.organData.name;
-            console.log(`[OrganStore] Starting organ: ${organName}`);
+            console.log(`[OrganStore] Starting organ: ${organName} `);
 
             // 1. Cleanup first (Idempotency)
             // await this.stopOrgan();
@@ -237,19 +173,24 @@ export const useOrganStore = defineStore('organ', {
                     this.stopVolumes = { ...this.stopVolumes, ...savedState.stopVolumes };
                 }
                 if (savedState.outputDir) {
-                    this.outputDir = savedState.outputDir;
-                    await this.updateDiskInfo();
+                    const exportStore = useExportStore();
+                    exportStore.outputDir = savedState.outputDir;
+                    await exportStore.updateDiskInfo();
                 }
                 if (savedState.virtualStops) this.virtualStops = savedState.virtualStops;
                 if (savedState.recordings) this.recordings = savedState.recordings;
-                if (savedState.remoteServerPort) this.remoteServerStatus.port = savedState.remoteServerPort;
-                if (savedState.isWebServerEnabled) {
-                    console.log('[WebRemote] Auto-starting web server based on saved state');
-                    this.setRemoteServerState(true);
-                }
+
+                // Initialize Audio Settings from Save
                 if (savedState.audioSettings) {
                     this.audioSettings = { ...DEFAULT_AUDIO_SETTINGS, ...savedState.audioSettings };
                 }
+            }
+
+            // Sync Remote Server Preference from Global Settings
+            if (settingsStore.isWebServerEnabled) {
+                console.log('[WebRemote] Auto-starting web server based on global settings');
+                this.remoteServerStatus.port = settingsStore.remoteServerPort;
+                this.setRemoteServerState(true);
             }
 
             // 4. Sync Settings to Synth engine
@@ -267,15 +208,18 @@ export const useOrganStore = defineStore('organ', {
                 await this.triggerPreload(this.audioSettings.loadingMode);
             }
 
-            // 7. Start / Refresh drive polling
-            this.fetchDrives();
+            // 7. Initialize Export Store polling
+            const exportStore = useExportStore();
+            exportStore.fetchDrives();
             if (this.drivePollInterval) clearInterval(this.drivePollInterval);
-            this.drivePollInterval = setInterval(() => this.fetchDrives(), 5000);
+            this.drivePollInterval = setInterval(() => exportStore.fetchDrives(), 5000);
 
-            // If we are still loading (preloading started by startOrgan -> triggerPreload)
-            // polling will handle turning off isLoadingOrgan.
+            await this.refreshRemoteStatus();
+
+            // Restore Active Combination to Synth
+            this.currentCombination.forEach(stopId => synth.markStopSelected(stopId));
+
             this.syncRemoteState();
-
             this.isLoadingOrgan = false;
         },
 
@@ -290,6 +234,11 @@ export const useOrganStore = defineStore('organ', {
             this.currentCombination = [];
             this.stopVolumes = {};
             this.virtualStops = [];
+
+            if (this.drivePollInterval) {
+                clearInterval(this.drivePollInterval);
+                this.drivePollInterval = null;
+            }
 
             if (this.sampleProgressPollingInterval) {
                 clearInterval(this.sampleProgressPollingInterval);
@@ -369,22 +318,25 @@ export const useOrganStore = defineStore('organ', {
             } else {
                 this.audioSettings.disabledRanks.splice(idx, 1);
             }
+            this.saveInternalState();
         },
 
 
         async setReleaseMode(mode: 'authentic' | 'convolution' | 'none') {
             this.audioSettings.releaseMode = mode;
             synth.setReleaseMode(mode);
+            this.saveInternalState();
         },
 
         async setLoadingMode(mode: 'none' | 'quick' | 'full') {
             this.audioSettings.loadingMode = mode;
+            this.saveInternalState();
         },
 
         async setReverbSettings(length: number, mix: number) {
-            this.audioSettings.reverbLength = length;
             this.audioSettings.reverbMix = mix;
             synth.configureReverb(length, mix);
+            this.saveInternalState();
         },
 
         setupSampleLoadListener() {
@@ -416,7 +368,7 @@ export const useOrganStore = defineStore('organ', {
             console.log(`[OrganStore] Triggering ${mode} preload for ${stops.size} stops...`);
 
             this.isLoadingOrgan = true; // Use this to show spinner/progress
-            this.renderStatus = `Preloading samples (${mode})...`;
+            this.renderStatus = `Preloading samples(${mode})...`;
             this.extractionProgress = 0;
 
             // Convert to array for iteration
@@ -535,10 +487,47 @@ export const useOrganStore = defineStore('organ', {
             const clearCleanup = window.myApi.onRemoteClearCombination(() => {
                 this.clearCombination();
             });
+            const loadBankCleanup = window.myApi.onRemoteLoadBank((_: any, data: any) => {
+                this.loadBank(data.index);
+            });
+            const saveToBankCleanup = window.myApi.onRemoteSaveToBank((_: any, data: any) => {
+                this.saveToBank(data.index);
+            });
+            const addBankCleanup = window.myApi.onRemoteAddBank((_: any, data: any) => {
+                this.addBank();
+            });
+            const deleteBankCleanup = window.myApi.onRemoteDeleteBank((_: any, data: any) => {
+                this.deleteBank(data.index);
+            });
+            const moveBankCleanup = window.myApi.onRemoteMoveBank((_: any, data: any) => {
+                this.moveBank(data.fromIndex, data.toIndex);
+            });
+            const deleteRecordingCleanup = window.myApi.onRemoteDeleteRecording((_: any, data: any) => {
+                this.deleteRecording(data.id);
+            });
+            const setStopVolumeCleanup = window.myApi.onRemoteSetStopVolume((_: any, data: any) => {
+                this.setStopVolume(data.stopId, data.volume);
+            });
+            const toggleRecordingCleanup = window.myApi.onRemoteToggleRecording((_: any, data: any) => {
+                if (this.isRecording) {
+                    this.stopRecording();
+                } else {
+                    this.startRecording();
+                }
+            });
+
             const originalCleanup = this.remoteSyncCleanup;
             this.remoteSyncCleanup = () => {
                 if (originalCleanup) originalCleanup();
                 clearCleanup();
+                loadBankCleanup();
+                saveToBankCleanup();
+                addBankCleanup();
+                deleteBankCleanup();
+                moveBankCleanup();
+                deleteRecordingCleanup();
+                setStopVolumeCleanup();
+                toggleRecordingCleanup();
             };
             this.refreshRemoteStatus();
 
@@ -555,7 +544,15 @@ export const useOrganStore = defineStore('organ', {
             } else if (!running && this.remoteServerStatus.running) {
                 this.remoteServerStatus = await window.myApi.stopWebServer();
             }
-            this.saveInternalState();
+
+            // Persist to Global Settings
+            const settingsStore = useSettingsStore();
+            await settingsStore.saveSettings({
+                isWebServerEnabled: running,
+                remoteServerPort: this.remoteServerStatus.port
+            });
+
+            // We don't saveInternalState here anymore as it is a global setting
         },
 
         async toggleRemoteServer() {
@@ -585,7 +582,12 @@ export const useOrganStore = defineStore('organ', {
                         screens: this.organData?.screens || [],
                         activeScreenIndex: this.organData?.activeScreenIndex || 0
                     },
-                    activatedStops: [...this.currentCombination]
+                    activatedStops: [...this.currentCombination],
+                    // Additional State for Remote App
+                    banks: this.banks,
+                    recordings: this.recordings,
+                    isRecording: this.isRecording,
+                    stopVolumes: this.stopVolumes
                 }));
                 window.myApi.updateRemoteState(cleanState);
             } else if (!this.organData) {
@@ -597,8 +599,8 @@ export const useOrganStore = defineStore('organ', {
             if (this.midiAccess) {
                 console.log('[MIDI] Stopping MIDI service and removing listeners...');
                 const listener = this.midiListener || this.handleMIDIMessage;
-                this.midiAccess.inputs.forEach((input) => {
-                    console.log(`[MIDI] Removing listener from input: ${input.name}`);
+                this.midiAccess.inputs.forEach((input: any) => {
+                    console.log(`[MIDI] Removing listener from input: ${input.name} `);
                     input.removeEventListener('midimessage', listener as EventListener);
                 });
                 this.midiListener = null;
@@ -612,7 +614,7 @@ export const useOrganStore = defineStore('organ', {
         async handleMIDIMessage(event: any) {
             const [status, note, velocity] = event.data;
             const type = status & 0xf0;
-            console.log(`[MIDI] Event: Status=${status}, Note=${note}, Velocity=${velocity}, Type=${type}`);
+            console.log(`[MIDI] Event: Status = ${status}, Note = ${note}, Velocity = ${velocity}, Type = ${type} `);
 
             if (type === 144 && velocity > 0) { // Note On
                 this.activeMidiNotes.add(note);
@@ -683,7 +685,8 @@ export const useOrganStore = defineStore('organ', {
                             .filter(id => id.startsWith('TREM_'))
                             .map(id => {
                                 const tremId = id.replace('TREM_', '');
-                                return this.organData.tremulants[tremId];
+                                // DEEP CLONE to avoid Proxy/Cloning error in Worker
+                                return JSON.parse(JSON.stringify(this.organData.tremulants[tremId]));
                             })
                             .filter(trem => trem && (!trem.manualId || String(trem.manualId) === String(manual?.id)));
 
@@ -721,88 +724,27 @@ export const useOrganStore = defineStore('organ', {
             this.stopVolumes[stopId] = volume;
         },
 
-        async setOutputDir() {
-            const dir = await window.myApi.selectFolder();
-            if (dir) {
-                this.outputDir = dir;
-                await this.updateDiskInfo();
-            }
-        },
-
-        async updateDiskInfo() {
-            if (!this.outputDir) {
-                this.isOutputRemovable = false;
-                return;
-            }
-            const info = await window.myApi.getDiskInfo(this.outputDir);
-            this.isOutputRemovable = !!(info && info.isRemovable);
-        },
-
-        async fetchDrives() {
-            const drives = await window.myApi.listRemovableDrives();
-            this.availableDrives = drives;
-
-            // Auto-select TCO drive if nothing selected
-            if (!this.outputDir && drives.length > 0) {
-                const target = drives.find((d: any) => d.volumeName === this.targetVolumeLabel) ||
-                    drives.find((d: any) => d.volumeName === 'TCO');
-                if (target) {
-                    this.outputDir = target.mountPoint;
-                    this.isOutputRemovable = true;
-                }
-            }
-        },
-
-        async checkOutputPath() {
-            if (!this.outputDir) return { type: 'none' };
-            const info = await window.myApi.getDiskInfo(this.outputDir);
-            if (info && info.isRemovable && info.isRoot) {
-                return { type: 'removable_root', info };
-            }
-            if (!this.suppressDiskWarning) {
-                return { type: 'local_folder' };
-            }
-            return { type: 'proceed' };
-        },
-
-        async formatOutputVolume() {
-            if (!this.outputDir) return;
-            this.isRendering = true;
-            this.renderStatus = 'Formatting volume...';
-
-            const label = this.targetVolumeLabel;
-
-            try {
-                const result = await window.myApi.formatVolume(this.outputDir, label);
-                if (result.success && result.newPath) {
-                    this.outputDir = result.newPath;
-                    this.renderStatus = 'Format successful.';
-                    await this.updateDiskInfo();
-                } else if (result.success) {
-                    this.renderStatus = `Format successful as ${label}. Remounting...`;
-                }
-            } catch (e: any) {
-                this.renderStatus = `Format failed: ${e.message}`;
-                throw e;
-            } finally {
-                this.isRendering = false;
-            }
+        async renderAll() {
+            const exportStore = useExportStore();
+            await exportStore.renderAll();
         },
 
         cancelRendering() {
-            window.myApi.cancelRendering();
-            this.renderStatus = 'Cancelling...';
+            // Moved to Export Store, but currentCombination might still be needed there?
+            // For now, removing from here as requested.
         },
 
         addBank() {
             if (this.banks.length >= 32) return false;
             const newBank: Bank = {
                 id: crypto.randomUUID(),
-                name: `Bank ${this.banks.length + 1}`,
+                name: `Bank ${this.banks.length + 1} `,
                 combination: [...this.currentCombination],
                 stopVolumes: { ...this.stopVolumes }
             };
             this.banks.push(newBank);
+            this.syncRemoteState();
+            this.saveInternalState();
             return true;
         },
 
@@ -843,15 +785,21 @@ export const useOrganStore = defineStore('organ', {
                     });
                 }
             });
+            this.syncRemoteState();
+            this.saveInternalState();
         },
 
         deleteBank(index: number) {
             this.banks.splice(index, 1);
+            this.saveInternalState();
+            this.syncRemoteState();
         },
 
         renameBank(index: number, newName: string) {
             if (this.banks[index]) {
                 this.banks[index].name = newName;
+                this.saveInternalState();
+                this.syncRemoteState();
             }
         },
 
@@ -860,17 +808,21 @@ export const useOrganStore = defineStore('organ', {
             const item = this.banks.splice(fromIndex, 1)[0];
             if (item) {
                 this.banks.splice(toIndex, 0, item);
+                this.saveInternalState();
+                this.syncRemoteState();
             }
         },
 
         addVirtualStop(stop: VirtualStop) {
             this.virtualStops.push(stop);
+            this.saveInternalState();
         },
 
         updateVirtualStop(updatedStop: VirtualStop) {
             const index = this.virtualStops.findIndex(v => v.id === updatedStop.id);
             if (index > -1) {
                 this.virtualStops.splice(index, 1, { ...updatedStop });
+                this.saveInternalState();
             }
         },
 
@@ -880,128 +832,15 @@ export const useOrganStore = defineStore('organ', {
             this.banks.forEach(bank => {
                 bank.combination = bank.combination.filter(x => x !== id);
             });
+            this.saveInternalState();
         },
 
         saveToBank(bankNumber: number) {
             if (this.banks[bankNumber]) {
                 this.banks[bankNumber].combination = [...this.currentCombination];
                 this.banks[bankNumber].stopVolumes = { ...this.stopVolumes };
-            }
-        },
-
-        async renderAll() {
-            if (!this.organData || this.banks.length === 0) return;
-            this.isRendering = true;
-            this.renderStatus = 'Starting batch render...';
-            try {
-                for (let i = 0; i < this.banks.length; i++) {
-                    this.renderStatus = `Rendering Bank ${i + 1} / ${this.banks.length}...`;
-                    const result = await this.renderBank(i, true);
-                    if (result && result.status === 'cancelled') {
-                        this.renderStatus = 'Batch render cancelled.';
-                        break;
-                    }
-                }
-            } catch (err) {
-                console.error(err);
-            } finally {
-                this.isRendering = false;
-                this.renderStatus = '';
-                this.renderProgress = 0;
-            }
-        },
-
-        async renderBank(bankNumber: number, keepAlive = false) {
-            const bank = this.banks[bankNumber];
-            if (!bank || !this.organData) return;
-
-            this.isRendering = true;
-            this.renderProgress = 0;
-
-            const progressListener = (_event: any, progress: number) => {
-                this.renderProgress = progress / 100;
-            };
-            (window as any).myApi.onRenderProgress(progressListener);
-
-            try {
-                const cleanStops: any = {};
-                Object.keys(this.organData.stops).forEach(id => {
-                    const s = this.organData.stops[id];
-                    cleanStops[id] = {
-                        id: s.id,
-                        name: s.name,
-                        rankIds: [...s.rankIds],
-                        manualId: s.manualId,
-                        volume: bank.stopVolumes[id] ?? this.stopVolumes[id] ?? 100,
-                        gain: s.gain || 0
-                    };
-                });
-
-                this.virtualStops.forEach(vs => {
-                    const originalStop = this.organData.stops[vs.originalStopId];
-                    if (originalStop) {
-                        cleanStops[vs.id] = {
-                            id: vs.id,
-                            name: vs.name,
-                            rankIds: [...originalStop.rankIds],
-                            manualId: originalStop.manualId,
-                            volume: bank.stopVolumes[vs.id] ?? vs.volume ?? 100,
-                            gain: originalStop.gain || 0,
-                            pitchShift: vs.pitchShift || 0,
-                            harmonicMultiplier: vs.harmonicMultiplier || 1,
-                            noteOffset: vs.noteOffset || 0,
-                            delay: vs.delay || 0
-                        };
-                    }
-                });
-
-                const cleanRanks: any = {};
-                Object.keys(this.organData.ranks).forEach(id => {
-                    const r = this.organData.ranks[id];
-                    cleanRanks[id] = {
-                        name: r.name,
-                        gain: r.gain || 0,
-                        pipes: r.pipes.map((p: any) => ({ ...p }))
-                    };
-                });
-
-                const cleanManuals = this.organData.manuals.map((m: any) => ({
-                    id: m.id,
-                    name: m.name,
-                    gain: m.gain || 0,
-                    stopIds: [...m.stopIds]
-                }));
-
-                const payload = {
-                    bankNumber,
-                    bankName: bank.name,
-                    combination: [...bank.combination],
-                    organData: {
-                        name: this.organData.name,
-                        globalGain: this.organData.globalGain ?? 0,
-                        stops: cleanStops,
-                        ranks: cleanRanks,
-                        manuals: cleanManuals,
-                        tremulants: this.organData.tremulants || {},
-                        basePath: this.organData.basePath
-                    },
-                    outputDir: this.outputDir
-                };
-
-                const result = await (window as any).myApi.renderBank(JSON.parse(JSON.stringify(payload)));
-                if (result && result.status === 'success') {
-                    this.outputDir = result.outputDir;
-                } else if (result && result.status === 'cancelled') {
-                    this.renderStatus = 'Render cancelled.';
-                }
-                return result;
-            } catch (err) {
-                console.error('Rendering failed:', err);
-            } finally {
-                if (!keepAlive) {
-                    this.isRendering = false;
-                    setTimeout(() => { this.renderProgress = 0; }, 1000);
-                }
+                this.saveInternalState();
+                this.syncRemoteState();
             }
         },
 
@@ -1010,13 +849,10 @@ export const useOrganStore = defineStore('organ', {
             const state = JSON.parse(JSON.stringify({
                 banks: this.banks,
                 stopVolumes: this.stopVolumes,
-                useReleaseSamples: this.useReleaseSamples,
-                outputDir: this.outputDir,
                 virtualStops: this.virtualStops,
                 recordings: this.recordings,
-                isWebServerEnabled: this.remoteServerStatus.running,
-                remoteServerPort: this.remoteServerStatus.port,
-                audioSettings: this.audioSettings
+                audioSettings: this.audioSettings,
+                outputDir: useExportStore().outputDir
             }));
             await (window as any).myApi.saveOrganState(this.organData.sourcePath, state);
         },
@@ -1034,6 +870,7 @@ export const useOrganStore = defineStore('organ', {
                     stopId
                 });
             });
+            this.syncRemoteState();
         },
 
         stopRecording() {
@@ -1045,7 +882,7 @@ export const useOrganStore = defineStore('organ', {
             const duration = performance.now() - this.recordingStartTime;
             const newRecording: RecordingSession = {
                 id: crypto.randomUUID(),
-                name: `Recording ${this.recordings.length + 1}`,
+                name: `Recording ${this.recordings.length + 1} `,
                 date: Date.now(),
                 duration: duration,
                 events: [...this.currentRecordingEvents]
@@ -1053,11 +890,13 @@ export const useOrganStore = defineStore('organ', {
 
             this.recordings.unshift(newRecording);
             this.saveInternalState();
+            this.syncRemoteState();
         },
 
         deleteRecording(id: string) {
             this.recordings = this.recordings.filter(r => r.id !== id);
             this.saveInternalState();
+            this.syncRemoteState();
         },
 
         renameRecording(id: string, newName: string) {
@@ -1074,14 +913,13 @@ export const useOrganStore = defineStore('organ', {
                 banks: this.banks,
                 stopVolumes: this.stopVolumes,
                 currentCombination: this.currentCombination,
-                useReleaseSamples: this.useReleaseSamples,
                 virtualStops: this.virtualStops
             };
             const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `${this.organData?.name || 'organ'}_config.json`;
+            a.download = `${this.organData?.name || 'organ'} _config.json`;
             a.click();
             URL.revokeObjectURL(url);
         },
