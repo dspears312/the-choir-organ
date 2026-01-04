@@ -35,7 +35,7 @@
                                 organStore.remoteServerStatus.port }}</q-item-label>
                         </q-item-section>
                         <q-item-section side>
-                            <q-btn flat round dense icon="content_copy" size="xs" color="grey-7"
+                            <q-btn flat round dense icon="mdi-content-copy" size="xs" color="grey-7"
                                 @click="copyToClipboard(`http://${ip}:${organStore.remoteServerStatus.port}`)">
                                 <q-tooltip>Copy URL</q-tooltip>
                             </q-btn>

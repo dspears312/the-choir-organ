@@ -2,7 +2,7 @@
     <q-layout view="lHh LpR lFf" class="bg-black text-amber">
         <q-header bordered class="bg-header-gradient border-bottom-amber text-amber-9">
             <q-toolbar>
-                <q-btn dense flat round icon="dock" @click="showCombos = !showCombos"
+                <q-btn dense flat round icon="mdi-dock-window" @click="showCombos = !showCombos"
                     :color="showCombos ? 'amber' : 'grey'" />
 
                 <q-toolbar-title class="font-cinzel text-center">
@@ -11,11 +11,11 @@
 
                 <div class="row items-center q-gutter-x-sm">
                     <q-btn flat round dense :color="isRecording ? 'red' : 'grey'"
-                        :icon="isRecording ? 'stop' : 'fiber_manual_record'" :class="{ 'animate-blink': isRecording }"
+                        :icon="isRecording ? 'mdi-stop' : 'mdi-record'" :class="{ 'animate-blink': isRecording }"
                         @click="organStore.toggleRecording">
                     </q-btn>
 
-                    <q-btn dense flat round icon="list" @click="showRecording = !showRecording"
+                    <q-btn dense flat round icon="mdi-format-list-bulleted" @click="showRecording = !showRecording"
                         :color="showRecording ? 'amber' : 'grey'" />
                 </div>
             </q-toolbar>

@@ -29,6 +29,8 @@ contextBridge.exposeInMainWorld('myApi', {
     listDir: (path: string) => ipcRenderer.invoke('list-dir', path),
     saveOrganState: (odfPath: string, state: any) => ipcRenderer.invoke('save-organ-state', odfPath, state),
     loadOrganState: (odfPath: string) => ipcRenderer.invoke('load-organ-state', odfPath),
+    saveMidiFile: (buffer: ArrayBuffer, filename: string) => ipcRenderer.invoke('save-midi-file', { buffer, filename }),
+    openMidiFile: () => ipcRenderer.invoke('open-midi-file'),
     parseOdf: (odfPath: string) => ipcRenderer.invoke('parse-odf', odfPath),
     getAppVersion: () => ipcRenderer.invoke('get-app-version'),
     getDiskInfo: (path: string) => ipcRenderer.invoke('get-disk-info', path),
@@ -96,6 +98,16 @@ contextBridge.exposeInMainWorld('myApi', {
         const listener = (event: any, data: any) => callback(event, data);
         ipcRenderer.on('remote-toggleRecording', listener);
         return () => ipcRenderer.removeListener('remote-toggleRecording', listener);
+    },
+    onRemotePlayRecording: (callback: (event: any, data: any) => void) => {
+        const listener = (event: any, data: any) => callback(event, data);
+        ipcRenderer.on('remote-playRecording', listener);
+        return () => ipcRenderer.removeListener('remote-playRecording', listener);
+    },
+    onRemoteStopPlayback: (callback: (event: any, data: any) => void) => {
+        const listener = (event: any, data: any) => callback(event, data);
+        ipcRenderer.on('remote-stopPlayback', listener);
+        return () => ipcRenderer.removeListener('remote-stopPlayback', listener);
     },
 
     // Updates

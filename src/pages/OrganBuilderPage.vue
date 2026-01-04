@@ -9,7 +9,7 @@
                     <!-- MIDI Status -->
                     <div class="status-indicator row items-center q-gutter-x-sm cursor-pointer hover-opacity-100"
                         @click="organStore.initMIDI" :class="{ 'opacity-50': organStore.midiStatus !== 'Connected' }">
-                        <q-icon name="circle" :color="midiColor" size="12px" />
+                        <q-icon name="mdi-circle" :color="midiColor" size="12px" />
                         <span class="text-caption text-uppercase tracking-wide">MIDI</span>
                         <q-tooltip class="bg-grey-10 text-amber shadow-4">
                             <div v-if="organStore.midiStatus === 'Connected'">MIDI Connected & Ready ({{
@@ -93,7 +93,7 @@
                                                         <q-list dense style="min-width: 150px">
                                                             <q-item clickable v-close-popup
                                                                 @click="openCreateVirtualStop(stopId)">
-                                                                <q-item-section avatar><q-icon name="add_circle"
+                                                                <q-item-section avatar><q-icon name="mdi-plus-circle"
                                                                         color="green" /></q-item-section>
                                                                 <q-item-section>Create Virtual stop</q-item-section>
                                                             </q-item>
@@ -113,13 +113,13 @@
                                                         <q-list dense style="min-width: 150px">
                                                             <q-item clickable v-close-popup
                                                                 @click="openEditVirtualStop(vs)">
-                                                                <q-item-section avatar><q-icon name="edit"
+                                                                <q-item-section avatar><q-icon name="mdi-pencil"
                                                                         color="blue" /></q-item-section>
                                                                 <q-item-section>Edit Virtual stop</q-item-section>
                                                             </q-item>
                                                             <q-item clickable v-close-popup
                                                                 @click="organStore.deleteVirtualStop(vs.id)">
-                                                                <q-item-section avatar><q-icon name="delete"
+                                                                <q-item-section avatar><q-icon name="mdi-delete"
                                                                         color="red" /></q-item-section>
                                                                 <q-item-section>Delete Virtual stop</q-item-section>
                                                             </q-item>
@@ -359,12 +359,12 @@ function getVirtualStopsFor(stopId: string) {
 }
 
 const drawerTabs = [
-    { id: 'combinations', icon: 'list', label: 'Banks', tooltip: 'Combination Banks' },
-    { id: 'recordings', icon: 'mic', label: 'Record', tooltip: 'Recordings' },
-    { id: 'export', icon: 'sd_card', label: 'SD Card', tooltip: 'Tsunami SD Export' },
-    { id: 'remote', icon: 'devices', label: 'Remote', tooltip: 'Remote Control & Server' },
-    { id: 'debug', icon: 'bug_report', label: 'Debug', tooltip: 'System Inspector' },
-    { id: 'settings', icon: 'settings', label: 'Setup', tooltip: 'Audio & RAM Settings' }
+    { id: 'combinations', icon: 'mdi-format-list-bulleted', label: 'Banks', tooltip: 'Combination Banks' },
+    { id: 'recordings', icon: 'mdi-microphone', label: 'Record', tooltip: 'Recordings' },
+    { id: 'export', icon: 'mdi-sd', label: 'SD Card', tooltip: 'Tsunami SD Export' },
+    { id: 'remote', icon: 'mdi-devices', label: 'Remote', tooltip: 'Remote Control & Server' },
+    { id: 'debug', icon: 'mdi-bug', label: 'Debug', tooltip: 'System Inspector' },
+    { id: 'settings', icon: 'mdi-cog', label: 'Setup', tooltip: 'Audio & RAM Settings' }
 ];
 
 function selectBank(index: number) {

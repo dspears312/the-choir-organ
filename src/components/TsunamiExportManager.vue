@@ -10,7 +10,7 @@
             <div v-if="!exportStore.isRendering" class="output-destination-area column q-gutter-y-xs">
                 <div class="row items-center justify-between">
                     <div class="text-caption text-grey-6">Target Device</div>
-                    <q-btn flat dense color="grey-6" :icon="showAdvanced ? 'arrow_back' : 'settings'" size="xs"
+                    <q-btn flat dense color="grey-6" :icon="showAdvanced ? 'mdi-arrow-left' : 'mdi-cog'" size="xs"
                         @click="showAdvanced = !showAdvanced">
                         <q-tooltip>{{ showAdvanced ? 'Back to Drive Picker' : 'Advanced Options' }}</q-tooltip>
                     </q-btn>
@@ -23,7 +23,7 @@
                         :class="{ 'drive-selected': exportStore.outputDir === drive.mountPoint }"
                         @click="selectDrive(drive)">
                         <q-icon
-                            :name="(drive.volumeName === 'TCO' || drive.volumeName === organStore.targetVolumeLabel) ? 'sd_card' : 'usb'"
+                            :name="(drive.volumeName === 'TCO' || drive.volumeName === organStore.targetVolumeLabel) ? 'mdi-sd' : 'mdi-usb'"
                             :color="(drive.volumeName === 'TCO' || drive.volumeName === organStore.targetVolumeLabel) ? 'amber' : 'grey-5'"
                             size="sm" class="q-mr-sm" />
                         <div class="col overflow-hidden">
@@ -31,7 +31,7 @@
                             </div>
                             <div class="text-xs text-grey-6 ellipsis">{{ drive.mountPoint }}</div>
                         </div>
-                        <q-icon v-if="exportStore.outputDir === drive.mountPoint" name="check_circle" color="amber"
+                        <q-icon v-if="exportStore.outputDir === drive.mountPoint" name="mdi-check-circle" color="amber"
                             size="xs" />
                     </div>
 
@@ -43,7 +43,7 @@
 
                 <!-- Advanced / Selection fallback -->
                 <q-btn v-if="exportStore.availableDrives.length === 0 || showAdvanced" outline color="amber-7"
-                    icon="folder_open" label="Select Custom Folder" class="full-width font-cinzel text-xs"
+                    icon="mdi-folder-open" label="Select Custom Folder" class="full-width font-cinzel text-xs"
                     @click="exportStore.setOutputDir" />
 
                 <!-- Advanced Folder View -->
@@ -61,7 +61,7 @@
                 :label="exportStore.isOutputRemovable ? 'Burn to Card' : 'Copy to Folder'"
                 class="full-width font-cinzel q-py-md shadow-10" :loading="exportStore.isRendering"
                 :disable="organStore.banks.length === 0" @click="handleBurnClick"
-                :icon-right="exportStore.isOutputRemovable ? 'sd_card' : 'folder'">
+                :icon-right="exportStore.isOutputRemovable ? 'mdi-sd' : 'mdi-folder'">
             </q-btn>
 
             <!-- Progress Area -->
@@ -72,7 +72,7 @@
                 <q-linear-progress stripe :value="exportStore.renderProgress" color="amber" size="12px" rounded />
                 <div class="row items-center justify-between q-mt-xs">
                     <div class="text-xs text-grey-6">{{ Math.round(exportStore.renderProgress * 100) }}%</div>
-                    <q-btn flat dense color="red-5" label="Cancel" size="sm" icon="close"
+                    <q-btn flat dense color="red-5" label="Cancel" size="sm" icon="mdi-close"
                         @click="exportStore.cancelRendering" />
                 </div>
             </div>
@@ -93,7 +93,7 @@
 
             <div v-if="organStore.banks.length === 0"
                 class="bg-amber-10 q-pa-sm rounded-borders text-black text-caption q-mt-sm">
-                <q-icon name="info" /> Create at least one combination bank before exporting.
+                <q-icon name="mdi-information" /> Create at least one combination bank before exporting.
             </div>
         </div>
 
@@ -102,7 +102,7 @@
             <q-card dark style="min-width: 450px; background: #1a1a1a; border: 1px solid #444;" class="q-pa-md">
                 <q-card-section class="row items-center q-pb-none">
                     <div class="text-h6 font-cinzel text-amber">
-                        <q-icon name="warning" color="amber" size="32px" class="q-mr-md" />
+                        <q-icon name="mdi-alert" color="amber" size="32px" class="q-mr-md" />
                         Compatibility Warning
                     </div>
                 </q-card-section>
@@ -126,7 +126,7 @@
                 class="q-pa-lg shadow-24">
                 <q-card-section class="row items-center q-pb-none">
                     <div class="text-h5 font-cinzel text-red-5">
-                        <q-icon name="sd_card_alert" color="red-5" size="40px" class="q-mr-md" />
+                        <q-icon name="mdi-sd" color="red-5" size="40px" class="q-mr-md" />
                         Format SD Card?
                     </div>
                 </q-card-section>
@@ -137,7 +137,7 @@
                         <div class="text-caption text-red-2">Mandatory for reliable Tsunami performance.</div>
                     </div>
                     <p class="text-body2">Volume will be named: <span class="text-amber text-weight-bold font-mono">"{{
-                            organStore.targetVolumeLabel }}"</span></p>
+                        organStore.targetVolumeLabel }}"</span></p>
                 </q-card-section>
                 <q-card-actions vertical align="center" class="q-gutter-y-sm">
                     <q-btn label="ERASE AND FORMAT (Recommended)" color="red-7"

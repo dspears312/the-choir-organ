@@ -1,5 +1,7 @@
 import { defineStore } from 'pinia';
 import { markRaw } from 'vue';
+import MidiWriter from 'midi-writer-js';
+import midiFile from 'midi-file';
 import { synthClient as synth } from '../services/synth-client';
 import { useSettingsStore } from './settings';
 import { useExportStore } from './export';
@@ -35,6 +37,13 @@ export const useOrganStore = defineStore('organ', {
         recordingStartTime: 0,
         currentRecordingEvents: [] as TimelineEvent[],
         recordings: [] as RecordingSession[],
+
+        // Playback State
+        isPlaying: false,
+        playbackRecordingId: null as string | null,
+        playbackStartTime: 0,
+        playbackTimer: null as any,
+        playbackEventIndex: 0,
 
         // Remote Server State
         remoteServerStatus: {
@@ -478,6 +487,8 @@ export const useOrganStore = defineStore('organ', {
                     console.log(`[MIDI] Adding listener to input: ${input.name} (id: ${input.id})`);
                     input.addEventListener('midimessage', boundListener);
                 });
+
+                this.initWorkerStats();
             }).catch((err) => {
                 this.midiStatus = 'Error';
                 this.midiError = err.message || 'Failed to access MIDI devices.';
@@ -489,7 +500,7 @@ export const useOrganStore = defineStore('organ', {
                 this.remoteSyncCleanup();
                 this.remoteSyncCleanup = null;
             }
-            this.remoteSyncCleanup = window.myApi.onRemoteToggleStop((event: any, stopId: string) => {
+            const toggleStopCleanup = window.myApi.onRemoteToggleStop((event: any, stopId: string) => {
                 this.toggleStop(stopId);
             });
             const clearCleanup = window.myApi.onRemoteClearCombination(() => {
@@ -523,10 +534,15 @@ export const useOrganStore = defineStore('organ', {
                     this.startRecording();
                 }
             });
+            const playRecordingCleanup = window.myApi.onRemotePlayRecording((_: any, data: any) => {
+                this.playRecording(data.id);
+            });
+            const stopPlaybackCleanup = window.myApi.onRemoteStopPlayback(() => {
+                this.stopPlayback();
+            });
 
-            const originalCleanup = this.remoteSyncCleanup;
             this.remoteSyncCleanup = () => {
-                if (originalCleanup) originalCleanup();
+                toggleStopCleanup();
                 clearCleanup();
                 loadBankCleanup();
                 saveToBankCleanup();
@@ -536,10 +552,13 @@ export const useOrganStore = defineStore('organ', {
                 deleteRecordingCleanup();
                 setStopVolumeCleanup();
                 toggleRecordingCleanup();
+                playRecordingCleanup();
+                stopPlaybackCleanup();
             };
             this.refreshRemoteStatus();
+        },
 
-            // Initialize Worker Stats Listener
+        initWorkerStats() {
             window.myApi.onWorkerStats((event: any, payload: { workerIndex: number, stats: any }) => {
                 this.workerStats[payload.workerIndex] = payload.stats;
             });
@@ -595,7 +614,9 @@ export const useOrganStore = defineStore('organ', {
                     banks: this.banks,
                     recordings: this.recordings,
                     isRecording: this.isRecording,
-                    stopVolumes: this.stopVolumes
+                    stopVolumes: this.stopVolumes,
+                    isPlaying: this.isPlaying,
+                    playbackRecordingId: this.playbackRecordingId
                 }));
                 window.myApi.updateRemoteState(cleanState);
             } else if (!this.organData) {
@@ -793,6 +814,15 @@ export const useOrganStore = defineStore('organ', {
                     });
                 }
             });
+
+            if (this.isRecording) {
+                this.currentRecordingEvents.push({
+                    timestamp: performance.now() - this.recordingStartTime,
+                    type: 'bankChange',
+                    bankIndex: index
+                });
+            }
+
             this.syncRemoteState();
             this.saveInternalState();
         },
@@ -956,6 +986,232 @@ export const useOrganStore = defineStore('organ', {
                 reader.readAsText(file);
             };
             input.click();
+        },
+
+        async exportRecordingToMIDI(recordingId: string) {
+            const recording = this.recordings.find(r => r.id === recordingId);
+            if (!recording) return;
+
+            const track = new MidiWriter.Track();
+            track.setTempo(120); // Default tempo for timestamp mapping
+            // midi-writer-js uses ticks. Default PPQ is 128.
+            // 120 BPM = 2 beats per second = 256 ticks per second.
+            // tick = (ms / 1000) * (BPM / 60) * PPQ
+            const msToTicks = (ms: number) => Math.round((ms / 1000) * (120 / 60) * 128);
+
+            // Filter out events that occurred before the first note (if any) to avoid long leading silence
+            const firstNote = recording.events.find(e => e.type === 'noteOn');
+            const startTime = firstNote ? firstNote.timestamp : 0;
+
+            // Group noteOn/noteOff into midi-writer NoteEvents
+            const activeNotes = new Map<number, { start: number, velocity: number }>();
+
+            recording.events.sort((a, b) => a.timestamp - b.timestamp).forEach(event => {
+                const tick = msToTicks(Math.max(0, event.timestamp - startTime));
+
+                if (event.type === 'noteOn' && event.note !== undefined) {
+                    activeNotes.set(event.note, { start: tick, velocity: event.velocity || 64 });
+                } else if (event.type === 'noteOff' && event.note !== undefined) {
+                    const noteInfo = activeNotes.get(event.note);
+                    if (noteInfo) {
+                        track.addEvent(new MidiWriter.NoteEvent({
+                            pitch: [event.note],
+                            duration: `T${tick - noteInfo.start}`,
+                            startTick: noteInfo.start,
+                            velocity: noteInfo.velocity
+                        }));
+                        activeNotes.delete(event.note);
+                    }
+                } else if (event.type === 'stopOn' && event.stopId) {
+                    track.addEvent(new MidiWriter.TextEvent({ text: `TCO:stopOn:${event.stopId}` }));
+                    (track.events[track.events.length - 1] as any).tick = tick;
+                } else if (event.type === 'stopOff' && event.stopId) {
+                    track.addEvent(new MidiWriter.TextEvent({ text: `TCO:stopOff:${event.stopId}` }));
+                    (track.events[track.events.length - 1] as any).tick = tick;
+                } else if (event.type === 'bankChange' && event.bankIndex !== undefined) {
+                    track.addEvent(new MidiWriter.ProgramChangeEvent({ instrument: event.bankIndex + 1 }));
+                    (track.events[track.events.length - 1] as any).tick = tick;
+                }
+            });
+
+            // Handle notes still held at the end
+            const lastTick = msToTicks(recording.duration - startTime);
+            activeNotes.forEach((info, note) => {
+                track.addEvent(new MidiWriter.NoteEvent({
+                    pitch: [note],
+                    duration: `T${lastTick - info.start}`,
+                    startTick: info.start,
+                    velocity: info.velocity
+                }));
+            });
+
+            const writer = new MidiWriter.Writer(track);
+            const uint8 = writer.buildFile();
+            // Use slice() on the Uint8Array to ensure we get a clean ArrayBuffer copy (not SharedArrayBuffer)
+            const buffer = uint8.slice().buffer as ArrayBuffer;
+            await window.myApi.saveMidiFile(buffer, `${recording.name}.mid`);
+        },
+
+        async importRecordingFromMIDI() {
+            const result = await window.myApi.openMidiFile();
+            if ('canceled' in result || 'error' in result) return;
+
+            try {
+                const parsed = midiFile.parseMidi(new Uint8Array(result.buffer as any));
+                const ppq = parsed.header.ticksPerBeat || 128;
+                let tempo = 500000; // Default 120 BPM (microseconds per beat)
+
+                const events: TimelineEvent[] = [];
+                let maxTimestamp = 0;
+
+                parsed.tracks.forEach(track => {
+                    let currentTick = 0;
+                    track.forEach(msg => {
+                        currentTick += msg.deltaTime;
+                        // timestamp (ms) = tick * (tempo / 1000) / ppq
+                        const timestamp = (currentTick * (tempo / 1000)) / ppq;
+
+                        if (msg.type === 'setTempo') {
+                            tempo = msg.microsecondsPerBeat;
+                        } else if (msg.type === 'noteOn') {
+                            events.push({
+                                timestamp,
+                                type: msg.velocity > 0 ? 'noteOn' : 'noteOff',
+                                note: msg.noteNumber,
+                                velocity: msg.velocity
+                            });
+                        } else if (msg.type === 'noteOff') {
+                            events.push({
+                                timestamp,
+                                type: 'noteOff',
+                                note: msg.noteNumber,
+                                velocity: 0
+                            });
+                        } else if (msg.type === 'programChange') {
+                            events.push({
+                                timestamp,
+                                type: 'bankChange',
+                                bankIndex: msg.programNumber
+                            });
+                        } else if (msg.type === 'text') {
+                            if (msg.text.startsWith('TCO:stopOn:')) {
+                                events.push({
+                                    timestamp,
+                                    type: 'stopOn',
+                                    stopId: msg.text.replace('TCO:stopOn:', '')
+                                });
+                            } else if (msg.text.startsWith('TCO:stopOff:')) {
+                                events.push({
+                                    timestamp,
+                                    type: 'stopOff',
+                                    stopId: msg.text.replace('TCO:stopOff:', '')
+                                });
+                            }
+                        }
+                        maxTimestamp = Math.max(maxTimestamp, timestamp);
+                    });
+                });
+
+                const newRecording: RecordingSession = {
+                    id: crypto.randomUUID(),
+                    name: result.filename.replace(/\.[^/.]+$/, ""),
+                    date: Date.now(),
+                    duration: maxTimestamp,
+                    events: events.sort((a, b) => a.timestamp - b.timestamp)
+                };
+
+                this.recordings.unshift(newRecording);
+                this.saveInternalState();
+                this.syncRemoteState();
+            } catch (err) {
+                console.error('Failed to parse MIDI file', err);
+            }
+        },
+
+        async playRecording(recordingId: string) {
+            if (this.isPlaying) this.stopPlayback();
+
+            const recording = this.recordings.find(r => r.id === recordingId);
+            if (!recording || recording.events.length === 0) return;
+
+            this.isPlaying = true;
+            this.playbackRecordingId = recordingId;
+            this.playbackStartTime = performance.now();
+            this.playbackEventIndex = 0;
+            this.syncRemoteState();
+
+            const tick = () => {
+                if (!this.isPlaying || this.playbackRecordingId !== recordingId) return;
+
+                const now = performance.now();
+                const elapsed = now - this.playbackStartTime;
+
+                while (this.playbackEventIndex < recording.events.length) {
+                    const event = recording.events[this.playbackEventIndex];
+                    if (!event || event.timestamp > elapsed) break;
+
+                    this.dispatchPlaybackEvent(event);
+                    this.playbackEventIndex++;
+                }
+
+                if (this.playbackEventIndex >= recording.events.length) {
+                    this.stopPlayback();
+                } else {
+                    this.playbackTimer = requestAnimationFrame(tick);
+                }
+            };
+
+            this.playbackTimer = requestAnimationFrame(tick);
+        },
+
+        dispatchPlaybackEvent(event: TimelineEvent) {
+            switch (event.type) {
+                case 'noteOn':
+                    if (event.note !== undefined && this.isSynthEnabled) {
+                        this.activeMidiNotes.add(event.note);
+                        this.currentCombination.forEach(stopId => this.playPipe(event.note!, stopId));
+                    }
+                    break;
+                case 'noteOff':
+                    if (event.note !== undefined && this.isSynthEnabled) {
+                        this.activeMidiNotes.delete(event.note);
+                        this.currentCombination.forEach(stopId => synth.noteOff(event.note!, stopId));
+                    }
+                    break;
+                case 'stopOn':
+                    if (event.stopId && !this.currentCombination.includes(event.stopId)) {
+                        this.toggleStop(event.stopId);
+                    }
+                    break;
+                case 'stopOff':
+                    if (event.stopId && this.currentCombination.includes(event.stopId)) {
+                        this.toggleStop(event.stopId);
+                    }
+                    break;
+                case 'bankChange':
+                    if (event.bankIndex !== undefined) {
+                        this.loadBank(event.bankIndex);
+                    }
+                    break;
+            }
+        },
+
+        stopPlayback() {
+            this.isPlaying = false;
+            if (this.playbackTimer) {
+                cancelAnimationFrame(this.playbackTimer);
+                this.playbackTimer = null;
+            }
+            this.playbackRecordingId = null;
+            this.syncRemoteState();
+
+            // Kill all sound
+            if (this.isSynthEnabled) {
+                this.activeMidiNotes.forEach(note => {
+                    this.currentCombination.forEach(stopId => synth.noteOff(note, stopId));
+                });
+                this.activeMidiNotes.clear();
+            }
         },
 
         async removeRecent(path: string) {

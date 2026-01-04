@@ -4,7 +4,7 @@
             class="column">
             <q-card-section class="row items-center justify-between bg-header-gradient border-bottom-amber">
                 <div class="text-h6 font-cinzel text-amber">Audio Settings</div>
-                <q-btn flat round dense icon="close" v-close-popup />
+                <q-btn flat round dense icon="mdi-close" v-close-popup />
             </q-card-section>
 
             <q-tabs v-model="activeTab" dense class="text-grey bg-dark-sidebar" active-color="amber"
@@ -73,7 +73,7 @@
                         </div>
                         <div class="row items-center q-gutter-x-md">
                             <div class="text-caption text-grey-5">Mix ({{ Math.round(pendingSettings.reverbMix * 100)
-                            }}%)
+                                }}%)
                             </div>
                             <q-slider v-model="pendingSettings.reverbMix" :min="0" :max="1" :step="0.05"
                                 @update:model-value="reverbPreset = 'custom'" color="amber" class="col" />
@@ -104,7 +104,7 @@
                         <q-input v-model="rankSearch" dense filled dark placeholder="Search Ranks..." color="amber"
                             class="q-mb-sm">
                             <template v-slot:append>
-                                <q-icon name="search" />
+                                <q-icon name="mdi-magnify" />
                             </template>
                         </q-input>
                         <div class="row q-gutter-x-sm">
@@ -132,7 +132,7 @@
                                     <q-item-section>
                                         <q-item-label class="text-amber-1">{{ rank.name }}</q-item-label>
                                         <q-item-label caption class="text-grey-5 text-tiny">ID: {{ rank.id
-                                        }}</q-item-label>
+                                            }}</q-item-label>
                                     </q-item-section>
                                 </q-item>
                             </div>

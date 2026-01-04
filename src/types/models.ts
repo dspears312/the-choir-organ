@@ -19,10 +19,11 @@ export interface VirtualStop {
 
 export interface TimelineEvent {
     timestamp: number;
-    type: 'noteOn' | 'noteOff' | 'stopOn' | 'stopOff';
+    type: 'noteOn' | 'noteOff' | 'stopOn' | 'stopOff' | 'bankChange';
     note?: number;
     stopId?: string;
     velocity?: number;
+    bankIndex?: number;
 }
 
 // Advanced Audio Settings

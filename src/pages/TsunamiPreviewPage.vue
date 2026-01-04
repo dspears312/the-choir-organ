@@ -3,14 +3,14 @@
     <!-- Toolbar Portal -->
     <Teleport to="#main-toolbar-portal">
       <div class="row no-wrap items-center col">
-        <q-btn flat round icon="arrow_back" color="grey-6" @click="$router.push('/')" class="q-mr-md" />
+        <q-btn flat round icon="mdi-arrow-left" color="grey-6" @click="$router.push('/')" class="q-mr-md" />
         <div class="text-h6 font-cinzel text-amber-8 text-shadow q-mr-lg gt-sm">Tsunami Board Preview</div>
 
         <div class="row items-center q-gutter-x-lg">
           <div id="midi-status-preview"
             class="status-indicator row items-center q-gutter-x-xs cursor-pointer hover-opacity-100"
             @click="organStore.initMIDI" :class="{ 'opacity-50': organStore.midiStatus !== 'Connected' }">
-            <q-icon name="circle" :color="midiStatusColor" size="12px" />
+            <q-icon name="mdi-circle" :color="midiStatusColor" size="12px" />
             <span class="text-caption text-uppercase tracking-wide">MIDI {{ organStore.midiStatus }}</span>
             <q-tooltip class="bg-grey-10 text-amber shadow-4">
               <div v-if="organStore.midiStatus === 'Connected'">MIDI Connected & Ready</div>
@@ -37,27 +37,27 @@
             <!-- Drive Picker -->
             <div class="q-mb-md">
               <div class="text-caption text-grey-6 q-mb-xs">Source Device</div>
-              <div v-if="organStore.availableDrives.length > 0" class="drive-picker q-gutter-y-xs">
-                <div v-for="drive in organStore.availableDrives" :key="drive.mountPoint"
+              <div v-if="exportStore.availableDrives.length > 0" class="drive-picker q-gutter-y-xs">
+                <div v-for="drive in exportStore.availableDrives" :key="drive.mountPoint"
                   class="drive-item q-pa-sm rounded-borders cursor-pointer row items-center no-wrap"
                   :class="{ 'drive-selected': folderPath === drive.mountPoint }" @click="selectDrive(drive)">
                   <q-icon
-                    :name="(drive.volumeName === 'TCO' || drive.volumeName === organStore.targetVolumeLabel) ? 'sd_card' : 'usb'"
+                    :name="(drive.volumeName === 'TCO' || drive.volumeName === organStore.targetVolumeLabel) ? 'mdi-sd' : 'mdi-usb'"
                     :color="(drive.volumeName === 'TCO' || drive.volumeName === organStore.targetVolumeLabel) ? 'amber' : 'grey-5'"
                     size="sm" class="q-mr-sm" />
                   <div class="col overflow-hidden">
                     <div class="text-caption text-weight-bold ellipsis">{{ drive.volumeName || 'Untitled' }}</div>
                     <div class="text-xs text-grey-6 ellipsis">{{ drive.mountPoint }}</div>
                   </div>
-                  <q-icon v-if="folderPath === drive.mountPoint" name="check_circle" color="amber" size="xs" />
+                  <q-icon v-if="folderPath === drive.mountPoint" name="mdi-check-circle" color="amber" size="xs" />
                 </div>
               </div>
               <div v-else class="q-pa-md bg-black-50 rounded-borders text-center border-amber-muted">
-                <q-icon name="info" color="grey-7" size="sm" class="q-mb-xs" />
+                <q-icon name="mdi-information" color="grey-7" size="sm" class="q-mb-xs" />
                 <div class="text-xs text-grey-6 italic">No removable drives detected</div>
               </div>
 
-              <q-btn color="grey" label="Select Local Folder" icon="folder_open"
+              <q-btn color="grey" label="Select Local Folder" icon="mdi-folder-open"
                 class="full-width q-mt-md text-amber-7 font-cinzel text-caption" outline @click="selectFolder" />
             </div>
           </div>
@@ -66,7 +66,7 @@
           <div v-if="folderPath && isLocalFolder" class="folder-shelf q-pa-sm rounded-borders q-mb-md col-auto">
             <div v-if="route.query.folder" class="row items-center justify-between q-mb-xs">
               <div class="text-caption text-grey-6">Active Path:</div>
-              <q-btn flat dense icon="refresh" color="grey-6" size="sm" @click="scanForBanks">
+              <q-btn flat dense icon="mdi-refresh" color="grey-6" size="sm" @click="scanForBanks">
                 <q-tooltip>Refresh Folder</q-tooltip>
               </q-btn>
             </div>
@@ -74,7 +74,7 @@
 
             <div class="row items-center no-wrap">
               <div class="text-xs text-amber break-all dir-path col">{{ folderPath }}</div>
-              <q-btn v-if="!route.query.folder" flat round dense icon="refresh" color="grey-6" size="sm"
+              <q-btn v-if="!route.query.folder" flat round dense icon="mdi-refresh" color="grey-6" size="sm"
                 @click="scanForBanks" class="q-ml-xs">
                 <q-tooltip>Refresh Folder</q-tooltip>
               </q-btn>
@@ -98,7 +98,7 @@
                       <q-item-label class="text-xs ellipsis">{{ bankNames[b] || `Bank ${b}` }}</q-item-label>
                     </q-item-section>
                     <q-item-section side v-if="selectedBank === b">
-                      <q-icon name="play_arrow" color="amber" size="xs" />
+                      <q-icon name="mdi-play" color="amber" size="xs" />
                     </q-item-section>
                   </q-item>
                 </q-list>
@@ -141,7 +141,7 @@
                 <div class="text-h4 text-amber-8 font-cinzel q-mb-xs">Real-time Note Monitor</div>
                 <div class="text-caption text-grey-7" v-if="folderPath">
                   Monitoring: <span class="text-amber">{{ bankNames[selectedBank] || `Bank ${selectedBank}`
-                  }}</span>
+                    }}</span>
                   <span class="q-ml-sm opacity-50">(On-Demand Loading)</span>
                 </div>
               </div>
@@ -158,7 +158,7 @@
 
             <div id="note-monitor" class="note-visualizer-container bg-dark-panel rounded-borders shadow-inset q-pa-xl">
               <div class="text-center" v-if="!folderPath && !processingMessage">
-                <q-icon name="queue_music" size="100px" color="grey-9" />
+                <q-icon name="mdi-playlist-music" size="100px" color="grey-9" />
                 <div class="text-h6 text-grey-8 q-mt-md font-cinzel">Select a Tsunami Render folder to start monitoring
                 </div>
               </div>
@@ -185,10 +185,12 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import { useOrganStore } from 'src/stores/organ';
+import { useExportStore } from 'src/stores/export';
 import { tsunamiPlayer } from 'src/services/tsunami-player';
 import { useRoute } from 'vue-router';
 
 const organStore = useOrganStore();
+const exportStore = useExportStore();
 const route = useRoute();
 
 const folderPath = ref('');
@@ -201,7 +203,7 @@ const bankNames = ref<Record<number, string>>({});
 
 const isLocalFolder = computed(() => {
   if (!folderPath.value) return false;
-  return !organStore.availableDrives.some(d => d.mountPoint === folderPath.value);
+  return !exportStore.availableDrives.some((d: any) => d.mountPoint === folderPath.value);
 });
 
 const midiStatusColor = computed(() => {
@@ -217,9 +219,9 @@ onMounted(async () => {
   organStore.isSynthEnabled = false;
 
   // Start drive polling if not already started
-  organStore.fetchDrives();
+  exportStore.fetchDrives();
   drivePollInterval = setInterval(() => {
-    organStore.fetchDrives();
+    exportStore.fetchDrives();
   }, 5000);
 
   // Initialize MIDI via global store
@@ -237,14 +239,14 @@ onMounted(async () => {
   const queryFolder = route.query.folder as string;
   if (queryFolder) {
     folderPath.value = queryFolder;
-  } else if (organStore.outputDir) {
-    folderPath.value = organStore.outputDir;
+  } else if (exportStore.outputDir) {
+    folderPath.value = exportStore.outputDir;
   }
 });
 
 function attachMidiListeners() {
   if (organStore.midiAccess) {
-    organStore.midiAccess.inputs.forEach(input => {
+    organStore.midiAccess.inputs.forEach((input: any) => {
       input.removeEventListener('midimessage', handleMIDI);
       input.addEventListener('midimessage', handleMIDI);
     });
@@ -347,7 +349,7 @@ onUnmounted(() => {
   }
 
   if (organStore.midiAccess) {
-    organStore.midiAccess.inputs.forEach(input => {
+    organStore.midiAccess.inputs.forEach((input: any) => {
       input.removeEventListener('midimessage', handleMIDI);
     });
   }

@@ -4,10 +4,10 @@
     <div class="column full-height">
       <!-- Header -->
       <div class="q-pa-md bg-header-gradient border-bottom-amber row items-center no-wrap">
-        <q-icon name="explore" color="amber-8" size="sm" class="q-mr-sm" />
+        <q-icon name="mdi-compass" color="amber-8" size="sm" class="q-mr-sm" />
         <div class="text-h6 font-cinzel text-amber-8 ellipsis">Guided Tour</div>
         <q-space />
-        <q-btn flat round dense icon="close" color="grey-6" @click="walkthroughStore.stop()" />
+        <q-btn flat round dense icon="mdi-close" color="grey-6" @click="walkthroughStore.stop()" />
       </div>
 
       <!-- Step Content -->
@@ -19,9 +19,10 @@
           {{ walkthroughStore.currentStep?.text }}
         </div>
 
-        <div v-if="walkthroughStore.currentStep?.targetId" class="q-mt-xl bg-amber-transparent q-pa-md rounded-borders border-amber-muted">
+        <div v-if="walkthroughStore.currentStep?.targetId"
+          class="q-mt-xl bg-amber-transparent q-pa-md rounded-borders border-amber-muted">
           <div class="row items-center q-gutter-x-sm">
-            <q-icon name="touch_app" color="amber-8" size="xs" class="animate-bounce" />
+            <q-icon name="mdi-gesture-tap" color="amber-8" size="xs" class="animate-bounce" />
             <div class="text-caption text-amber-8 text-weight-bold uppercase">Action Required</div>
           </div>
           <div class="text-xs text-grey-5 q-mt-xs">
@@ -35,8 +36,8 @@
         <div class="row q-gutter-x-sm">
           <q-btn flat color="grey-7" label="Back" class="col" :disable="walkthroughStore.isFirstStep"
             @click="prevStep" />
-          <q-btn color="amber-9" text-color="black" :label="walkthroughStore.isLastStep ? 'Finish' : 'Next'" class="col font-cinzel"
-            @click="nextStep" />
+          <q-btn color="amber-9" text-color="black" :label="walkthroughStore.isLastStep ? 'Finish' : 'Next'"
+            class="col font-cinzel" @click="nextStep" />
         </div>
         <q-btn flat color="red-5" label="Exit Tour" class="full-width q-mt-sm text-caption"
           @click="walkthroughStore.stop()" />
@@ -108,8 +109,21 @@ function handleRoute() {
 }
 
 @keyframes bounce {
-  0%, 20%, 50%, 80%, 100% {transform: translateY(0);}
-  40% {transform: translateY(-5px);}
-  60% {transform: translateY(-3px);}
+
+  0%,
+  20%,
+  50%,
+  80%,
+  100% {
+    transform: translateY(0);
+  }
+
+  40% {
+    transform: translateY(-5px);
+  }
+
+  60% {
+    transform: translateY(-3px);
+  }
 }
 </style>

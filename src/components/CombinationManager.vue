@@ -13,15 +13,16 @@
             </div>
             <div class="row no-wrap q-gutter-x-xs">
                 <template v-if="allowImportExport">
-                    <q-btn flat icon="file_open" round size="sm" color="amber-7" @click="organStore.importFromJSON">
+                    <q-btn flat icon="mdi-folder-open" round size="sm" color="amber-7"
+                        @click="organStore.importFromJSON">
                         <q-tooltip>Open Combination File</q-tooltip>
                     </q-btn>
-                    <q-btn flat round icon="save" color="green" size="sm" @click="organStore.exportToJSON">
+                    <q-btn flat round icon="mdi-content-save" color="green" size="sm" @click="organStore.exportToJSON">
                         <q-tooltip>Save Combination File</q-tooltip>
                     </q-btn>
                 </template>
-                <q-btn v-else flat round :icon="editMode ? 'done' : 'edit'" :color="editMode ? 'green' : 'grey-6'"
-                    size="sm" @click="editMode = !editMode">
+                <q-btn v-else flat round :icon="editMode ? 'mdi-check' : 'mdi-pencil'"
+                    :color="editMode ? 'green' : 'grey-6'" size="sm" @click="editMode = !editMode">
                     <q-tooltip>{{ editMode ? 'Finish Editing' : 'Edit Banks' }}</q-tooltip>
                 </q-btn>
             </div>
@@ -36,10 +37,10 @@
                     @click="organStore.loadBank(index)">
                     <q-item-section side v-if="showEditControls">
                         <div class="column q-gutter-xs">
-                            <q-btn flat dense role="img" icon="keyboard_arrow_up" size="xs" color="grey-6"
+                            <q-btn flat dense role="img" icon="mdi-chevron-up" size="xs" color="grey-6"
                                 @click.stop="organStore.moveBank(index as number, (index as number) - 1)"
                                 :disable="index === 0" />
-                            <q-btn flat dense role="img" icon="keyboard_arrow_down" size="xs" color="grey-6"
+                            <q-btn flat dense role="img" icon="mdi-chevron-down" size="xs" color="grey-6"
                                 @click.stop="organStore.moveBank(index as number, (index as number) + 1)"
                                 :disable="index === organStore.banks.length - 1" />
                         </div>
@@ -54,7 +55,7 @@
                                     <q-input v-model="scope.value" dense autofocus counter @keyup.enter="scope.set" dark
                                         color="amber" label="Rename Bank" />
                                 </q-popup-edit>
-                                <q-icon name="edit" size="xs" color="grey-8"
+                                <q-icon name="mdi-pencil" size="xs" color="grey-8"
                                     class="q-ml-sm cursor-pointer opacity-50 hover-opacity-100" />
                             </template>
                         </q-item-label>
@@ -63,7 +64,7 @@
                     </q-item-section>
 
                     <q-item-section side v-if="showEditControls">
-                        <q-btn flat round dense icon="delete" color="red-9" size="sm"
+                        <q-btn flat round dense icon="mdi-delete" color="red-9" size="sm"
                             @click.stop="organStore.deleteBank(index)" />
                     </q-item-section>
                 </q-item>
@@ -77,12 +78,12 @@
         <!-- Bank Actions -->
         <div class="q-pa-md bg-dark-sidebar column border-top-amber-muted" v-if="showEditControls">
             <div class="row q-gutter-x-sm">
-                <q-btn id="btn-save-new-comp" color="amber" text-color="black" icon-right="add" label="Save to New"
+                <q-btn id="btn-save-new-comp" color="amber" text-color="black" icon-right="mdi-plus" label="Save to New"
                     class="col font-cinzel text-caption" :disable="organStore.banks.length >= 32" @click="addNewBank">
                     <q-tooltip v-if="organStore.banks.length >= 32">Bank limit reached (32)</q-tooltip>
                 </q-btn>
 
-                <q-btn color="grey-9" text-color="grey-5" icon-right="backspace" label="Overwrite"
+                <q-btn color="grey-9" text-color="grey-5" icon-right="mdi-backspace" label="Overwrite"
                     class="col font-cinzel text-caption" outline
                     :disable="modelValue === null || !organStore.banks[modelValue]" @click="saveToCurrentBank" />
             </div>

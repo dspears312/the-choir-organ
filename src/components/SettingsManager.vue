@@ -25,9 +25,9 @@
             <div class="column q-gutter-y-sm">
                 <div class="text-subtitle2 text-grey-4">Global Volume</div>
                 <div class="row items-center q-gutter-x-md">
-                    <q-icon name="volume_up" color="grey-6" />
+                    <q-icon name="mdi-volume-high" color="grey-6" />
                     <q-slider v-model="organStore.globalVolume" :min="0" :max="100" color="amber" class="col"
-                        @update:model-value="organStore.setGlobalVolume($event)" />
+                        @update:model-value="val => organStore.setGlobalVolume(val ?? 0)" />
                     <div class="text-caption text-amber font-mono" style="min-width: 35px">
                         {{ Math.round(organStore.globalVolume) }}%
                     </div>
@@ -41,13 +41,9 @@
                 <div class="text-caption text-grey-6">
                     Manage sample-level settings, release modes, and ranks.
                 </div>
-                <q-btn outline color="amber-7" label="Open Full Audio Settings" icon="tune" class="full-width q-mt-sm"
-                    @click="$emit('open-advanced')" />
+                <q-btn outline color="amber-7" label="Open Full Audio Settings" icon="mdi-tune"
+                    class="full-width q-mt-sm" @click="$emit('open-advanced')" />
             </div>
-        </div>
-
-        <div class="mt-auto q-pa-md">
-            <AudioMeter />
         </div>
     </div>
 </template>
@@ -56,7 +52,6 @@
 import { onMounted } from 'vue';
 import { useSettingsStore } from 'src/stores/settings';
 import { useOrganStore } from 'src/stores/organ';
-import AudioMeter from 'src/components/AudioMeter.vue';
 
 const emit = defineEmits(['open-advanced']);
 

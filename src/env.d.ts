@@ -26,6 +26,8 @@ export interface IElectronAPI {
   parseOdf: (odfPath: string) => Promise<any>;
   loadOrganState: (odfPath: string) => Promise<any>;
   renderPerformance: (recording: any, organData: any, renderTails: boolean) => Promise<any>;
+  saveMidiFile: (buffer: ArrayBuffer, filename: string) => Promise<any>;
+  openMidiFile: () => Promise<{ buffer: ArrayBuffer, filename: string } | { canceled: true } | { error: string }>;
   cancelRendering: () => Promise<void>;
   getAppVersion: () => Promise<string>;
   getDiskInfo: (path: string) => Promise<any>;
@@ -43,6 +45,17 @@ export interface IElectronAPI {
   getWebServerStatus: () => Promise<any>;
   updateRemoteState: (state: any) => Promise<void>;
   onRemoteToggleStop: (callback: (event: any, stopId: string) => void) => () => void;
+  onRemoteClearCombination: (callback: (event: any) => void) => () => void;
+  onRemoteLoadBank: (callback: (event: any, data: any) => void) => () => void;
+  onRemoteSaveToBank: (callback: (event: any, data: any) => void) => () => void;
+  onRemoteAddBank: (callback: (event: any, data: any) => void) => () => void;
+  onRemoteDeleteBank: (callback: (event: any, data: any) => void) => () => void;
+  onRemoteMoveBank: (callback: (event: any, data: any) => void) => () => void;
+  onRemoteDeleteRecording: (callback: (event: any, data: any) => void) => () => void;
+  onRemoteSetStopVolume: (callback: (event: any, data: any) => void) => () => void;
+  onRemoteToggleRecording: (callback: (event: any, data: any) => void) => () => void;
+  onRemotePlayRecording: (callback: (event: any, data: any) => void) => () => void;
+  onRemoteStopPlayback: (callback: (event: any, data: any) => void) => () => void;
 
   // Updates
   checkForUpdates: () => Promise<any>;
@@ -54,7 +67,6 @@ export interface IElectronAPI {
   sendWorkerCommand: (workerIndex: number, command: any) => void;
   onWorkerInit: (callback: (event: any) => void) => () => void;
   onWorkerCommand: (callback: (command: any) => void) => () => void;
-  onRemoteClearCombination: (callback: (event: any) => void) => () => void;
   sendWorkerStats: (stats: any) => void;
   onWorkerStats: (callback: (event: any, stats: any) => void) => () => void;
   getProcessMemoryUsage: () => Promise<any>;

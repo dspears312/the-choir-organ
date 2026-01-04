@@ -20,7 +20,7 @@
           <q-btn v-else-if="canDownload" flat label="Download" :loading="downloading" @click="download" />
           -->
 
-          <q-btn flat icon="close" v-close-popup v-if="!downloading" />
+          <q-btn flat icon="mdi-close" v-close-popup v-if="!downloading" />
         </div>
       </q-card-section>
     </q-card>

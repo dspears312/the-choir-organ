@@ -631,6 +631,43 @@ ipcMain.handle('save-organ-state', async (event, odfPath, state) => {
   saveOrganState(odfPath, state);
 });
 
+ipcMain.handle('save-midi-file', async (event, { buffer, filename }) => {
+  const result = await dialog.showSaveDialog(mainWindow!, {
+    title: 'Save MIDI File',
+    defaultPath: filename,
+    filters: [{ name: 'MIDI Files', extensions: ['mid', 'midi'] }]
+  });
+
+  if (result.canceled || !result.filePath) return { canceled: true };
+
+  try {
+    fs.writeFileSync(result.filePath, Buffer.from(buffer));
+    return { success: true };
+  } catch (e: any) {
+    console.error('Failed to save MIDI file:', e);
+    return { error: e.message };
+  }
+});
+
+ipcMain.handle('open-midi-file', async () => {
+  const result = await dialog.showOpenDialog(mainWindow!, {
+    title: 'Open MIDI File',
+    filters: [{ name: 'MIDI Files', extensions: ['mid', 'midi'] }],
+    properties: ['openFile']
+  });
+
+  if (result.canceled || result.filePaths.length === 0 || !result.filePaths[0]) return { canceled: true };
+
+  try {
+    const filePath = result.filePaths[0];
+    const buffer = fs.readFileSync(filePath);
+    return { buffer: buffer.buffer, filename: path.basename(filePath) };
+  } catch (e: any) {
+    console.error('Failed to load MIDI file:', e);
+    return { error: e.message };
+  }
+});
+
 ipcMain.handle('get-app-version', () => {
   return process.env.APP_VERSION || app.getVersion();
 });

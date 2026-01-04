@@ -6,7 +6,7 @@
                 <q-card dark style="width: 500px; background: rgba(20, 20, 20, 0.95); border: 1px solid #d4af37;"
                     class="q-pa-lg shadow-24">
                     <q-card-section class="column items-center">
-                        <q-icon name="unarchive" size="64px" color="amber-7" class="q-mb-md" />
+                        <q-icon name="mdi-archive" size="64px" color="amber-7" class="q-mb-md" />
                         <div class="text-h5 font-cinzel text-amber-8 q-mb-sm">Extracting Organ</div>
                         <div class="text-caption text-grey-5 text-center q-mb-lg">This may take a few minutes for large
                             archives...
@@ -46,7 +46,7 @@
                     <q-card-section class="row items-center q-pb-none">
                         <div class="text-h6 font-cinzel text-amber-5 ellipsis">{{ selectedOrgan?.name }}</div>
                         <q-space />
-                        <q-btn icon="close" flat round dense v-close-popup />
+                        <q-btn icon="mdi-close" flat round dense v-close-popup />
                     </q-card-section>
 
                     <q-card-section>
@@ -69,11 +69,11 @@
                         <q-separator dark class="q-mb-md" />
 
                         <div class="column q-gutter-y-md">
-                            <q-btn outline color="warning" label="Remove from List" icon="clear"
+                            <q-btn outline color="warning" label="Remove from List" icon="mdi-close"
                                 @click="handleRemoveList" align="left" class="full-width"
                                 hint="Removes this item from the recent list. Files remain on disk." />
 
-                            <q-btn outline color="negative" label="Delete from Disk" icon="delete_forever"
+                            <q-btn outline color="negative" label="Delete from Disk" icon="mdi-delete-forever"
                                 @click="handleDeleteDisk" align="left" class="full-width" />
                         </div>
                     </q-card-section>
@@ -82,14 +82,14 @@
 
             <!-- First time user vs returning user -->
             <div v-if="organStore.recentFiles.length === 0" class="first-time-container column items-center">
-                <q-icon name="piano" size="120px" class="text-amber-8 q-mb-lg" />
+                <q-icon name="mdi-piano" size="120px" class="text-amber-8 q-mb-lg" />
                 <div class="text-h2 font-cinzel text-amber-9 q-mb-xl text-center">The Choir Organ</div>
                 <q-btn id="btn-open-odf-prominent" color="amber-9" size="xl" label="Install Organ"
-                    @click="() => organStore.installOrgan()" icon="folder_open" class="font-cinzel q-px-xl q-py-md"
+                    @click="() => organStore.installOrgan()" icon="mdi-folder-open" class="font-cinzel q-px-xl q-py-md"
                     outline />
                 <div class="q-mt-xl text-center">
                     <q-btn flat color="grey-6" label="Preview SD card" @click="$router.push('/preview')"
-                        class="font-cinzel text-subtitle1" icon="sd_card" />
+                        class="font-cinzel text-subtitle1" icon="mdi-sd" />
                 </div>
             </div>
 
@@ -103,7 +103,8 @@
                             class="column no-wrap flex-center cursor-pointer"
                             @click="$router.push({ path: '/builder', query: { file } })">
                             <div class="slide-background-gradient absolute-full"></div>
-                            <q-icon name="church" size="100px" color="amber-8" class="q-mb-md" style="z-index: 1;" />
+                            <q-icon name="mdi-church" size="100px" color="amber-8" class="q-mb-md"
+                                style="z-index: 1;" />
                             <div class="text-h3 font-cinzel text-amber-1 q-px-xl text-center" style="z-index: 1;">
                                 {{ getDisplayName(file) }}
                             </div>
@@ -118,18 +119,18 @@
                         <q-item v-for="file in organStore.recentFiles" :key="file" clickable v-ripple
                             @click="$router.push({ path: '/builder', query: { file } })">
                             <q-item-section avatar>
-                                <q-icon name="history" color="amber-7" />
+                                <q-icon name="mdi-history" color="amber-7" />
                             </q-item-section>
                             <q-item-section>
                                 <q-item-label class="text-amber-1 ellipsis">{{ getDisplayName(file) }}</q-item-label>
                             </q-item-section>
                             <q-item-section side>
                                 <div class="row q-gutter-x-xs">
-                                    <q-btn flat round color="grey-6" icon="settings"
+                                    <q-btn flat round color="grey-6" icon="mdi-cog"
                                         @click.stop="openSettingsDialog(file)">
                                         <q-tooltip>Configure Audio & Ranks</q-tooltip>
                                     </q-btn>
-                                    <q-btn flat round color="grey-5" icon="more_vert"
+                                    <q-btn flat round color="grey-5" icon="mdi-dots-vertical"
                                         @click.stop="openManagementDialog(file)" />
                                 </div>
                             </q-item-section>
@@ -137,10 +138,10 @@
                     </q-list>
 
                     <div class="row q-mt-xl justify-center q-gutter-md">
-                        <q-btn color="amber-9" outline label="Install Organ" icon="folder_open"
+                        <q-btn color="amber-9" outline label="Install Organ" icon="mdi-folder-open"
                             @click="() => organStore.installOrgan()" class="font-cinzel" />
                         <q-btn flat color="grey-6" label="Preview SD card" @click="$router.push('/preview')"
-                            class="font-cinzel" icon="sd_card" />
+                            class="font-cinzel" icon="mdi-sd" />
                     </div>
                 </div>
             </div>
@@ -292,8 +293,6 @@ watch(() => organStore.organData, (newData) => {
 
 .slide-background-gradient {
     background: linear-gradient(135deg, rgba(30, 30, 30, 0.9) 0%, rgba(10, 10, 10, 0.95) 100%);
-    border: 1px solid rgba(212, 175, 55, 0.2);
-    border-radius: 12px;
 }
 
 .list-wrapper {

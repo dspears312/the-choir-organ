@@ -6,15 +6,15 @@
         <q-icon name="piano" class="q-ml-xs" />
         <div class="text-caption font-cinzel tracking-widest q-ml-sm">The Choir Organ</div>
         <q-space />
-        <q-btn dense flat icon="minimize" @click="minimize" class="control-btn" />
-        <q-btn dense flat icon="crop_square" @click="toggleMaximize" class="control-btn" />
-        <q-btn dense flat icon="close" @click="close" class="control-btn hover-red" />
+        <q-btn dense flat icon="mdi-window-minimize" @click="minimize" class="control-btn" />
+        <q-btn dense flat icon="mdi-checkbox-blank-outline" @click="toggleMaximize" class="control-btn" />
+        <q-btn dense flat icon="mdi-close" @click="close" class="control-btn hover-red" />
       </q-bar>
 
       <div class="row no-wrap items-center q-pl-lg q-py-sm q-electron-drag"
         :class="{ 'mac-header-padding': platform === 'darwin' }">
         <div class="row items-center cursor-pointer" @click="$router.push('/')">
-          <q-icon name="piano" size="24px" class="text-amber-8 q-mr-sm" />
+          <q-icon name="mdi-piano" size="24px" class="text-amber-8 q-mr-sm" />
           <div class="text-h6 font-cinzel text-amber-8 tracking-widest no-wrap">
             The Choir Organ
           </div>
@@ -30,21 +30,21 @@
             <span v-if="appVersion" class="text-grey-9 q-ml-sm">v{{ appVersion }}</span>
           </div>
 
-          <q-btn flat round icon="help_outline" color="amber-8" size="sm" class="q-mr-md">
+          <q-btn flat round icon="mdi-help-circle-outline" color="amber-8" size="sm" class="q-mr-md">
             <q-tooltip>Help & Walkthrough</q-tooltip>
             <q-menu dark class="bg-grey-10 text-amber">
               <q-list style="min-width: 150px">
                 <q-item clickable v-close-popup @click="walkthroughStore.start(organStore)">
-                  <q-item-section avatar><q-icon name="explore" /></q-item-section>
+                  <q-item-section avatar><q-icon name="mdi-compass" /></q-item-section>
                   <q-item-section>Start Guided Tour</q-item-section>
                 </q-item>
                 <q-item clickable v-close-popup @click="showHelp = true">
-                  <q-item-section avatar><q-icon name="info" /></q-item-section>
+                  <q-item-section avatar><q-icon name="mdi-information" /></q-item-section>
                   <q-item-section>Quick Info Dialog</q-item-section>
                 </q-item>
                 <q-separator dark />
                 <q-item clickable v-close-popup @click="debugStore.open()">
-                  <q-item-section avatar><q-icon name="bug_report" color="red-5" /></q-item-section>
+                  <q-item-section avatar><q-icon name="mdi-bug" color="red-5" /></q-item-section>
                   <q-item-section class="text-red-5">Debug Inspector</q-item-section>
                 </q-item>
               </q-list>

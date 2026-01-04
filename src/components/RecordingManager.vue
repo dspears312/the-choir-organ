@@ -3,8 +3,12 @@
         <div class="q-pa-md bg-header-gradient border-bottom-amber row items-center justify-between">
             <div class="text-h6 font-cinzel text-amber-9">Recordings</div>
             <div class="row items-center q-gutter-x-sm">
+                <q-btn v-if="allowExport" flat round dense icon="mdi-upload" color="amber-1"
+                    @click="organStore.importRecordingFromMIDI()">
+                    <q-tooltip>Import MIDI</q-tooltip>
+                </q-btn>
                 <q-btn round flat dense :color="organStore.isRecording ? 'red' : 'grey-6'"
-                    :icon="organStore.isRecording ? 'stop' : 'fiber_manual_record'"
+                    :icon="organStore.isRecording ? 'mdi-stop' : 'mdi-record'"
                     :class="{ 'animate-blink': organStore.isRecording }" @click="toggleRecording">
                     <q-tooltip>{{ organStore.isRecording ? 'Stop Recording' : 'Start Recording' }}</q-tooltip>
                 </q-btn>
@@ -38,7 +42,7 @@
                                 <q-input v-model="scope.value" dense autofocus @keyup.enter="scope.set" dark
                                     color="amber" />
                             </q-popup-edit>
-                            <q-icon name="edit" size="xs" color="grey-8"
+                            <q-icon name="mdi-pencil" size="xs" color="grey-8"
                                 class="q-ml-sm cursor-pointer opacity-50 hover-opacity-100" />
                         </q-item-label>
                         <q-item-label caption class="text-grey-5">
@@ -51,11 +55,21 @@
 
                     <q-item-section side>
                         <div class="row q-gutter-x-xs">
-                            <q-btn v-if="allowExport" flat round dense icon="download" color="green-5"
+                            <q-btn flat round dense
+                                :icon="organStore.isPlaying && organStore.playbackRecordingId === rec.id ? 'mdi-stop' : 'mdi-play'"
+                                :color="organStore.isPlaying && organStore.playbackRecordingId === rec.id ? 'red' : 'amber'"
+                                @click="organStore.isPlaying && organStore.playbackRecordingId === rec.id ? organStore.stopPlayback() : organStore.playRecording(rec.id)">
+                                <q-tooltip>{{ getPlaybackTooltip(rec) }}</q-tooltip>
+                            </q-btn>
+                            <q-btn v-if="allowExport" flat round dense icon="mdi-download" color="green-5"
                                 @click="initRenderRecording(rec)">
                                 <q-tooltip>Render to WAV</q-tooltip>
                             </q-btn>
-                            <q-btn flat round dense icon="delete" color="red-9"
+                            <q-btn v-if="allowExport" flat round dense icon="mdi-midi" color="blue-4"
+                                @click="organStore.exportRecordingToMIDI(rec.id)">
+                                <q-tooltip>Export MIDI</q-tooltip>
+                            </q-btn>
+                            <q-btn flat round dense icon="mdi-delete" color="red-9"
                                 @click="organStore.deleteRecording(rec.id)">
                                 <q-tooltip>Delete</q-tooltip>
                             </q-btn>
@@ -73,7 +87,7 @@
                 <div class="text-h6 font-cinzel text-amber">Render Recording</div>
                 <div class="text-caption text-grey-5 q-mb-md">Choose rendering mode for "{{
                     exportStore?.selectedRecording?.name
-                }}"
+                    }}"
                 </div>
 
                 <q-list dark>
@@ -145,6 +159,10 @@ const renderMode = computed({
 
 const toggleRecording = () => {
     emit('toggle-recording');
+};
+
+const getPlaybackTooltip = (rec: any) => {
+    return organStore.isPlaying && organStore.playbackRecordingId === rec.id ? 'Stop Playback' : 'Play Live';
 };
 
 const initRenderRecording = (rec: any) => {
