@@ -48,6 +48,18 @@ export function loadOrganCache(odfPath: string): any | null {
     return null;
 }
 
+export function clearOrganCache(odfPath: string) {
+    try {
+        const p = getOrganCachePath(odfPath);
+        if (fs.existsSync(p)) {
+            fs.unlinkSync(p);
+            console.log(`[Persistence] Cleared organ cache for ${odfPath}`);
+        }
+    } catch (e) {
+        console.error(`Failed to clear organ cache for ${odfPath}`, e);
+    }
+}
+
 interface UserSettings {
     recentOdfs: string[];
     lastExportDir: string;
@@ -124,6 +136,18 @@ export function loadOrganState(odfPath: string): any | null {
         console.error(`Failed to load organ state for ${odfPath}`, e);
     }
     return null;
+}
+
+export function clearOrganState(odfPath: string) {
+    try {
+        const p = getOrganStatePath(odfPath);
+        if (fs.existsSync(p)) {
+            fs.unlinkSync(p);
+            console.log(`[Persistence] Cleared organ state for ${odfPath}`);
+        }
+    } catch (e) {
+        console.error(`Failed to clear organ state for ${odfPath}`, e);
+    }
 }
 
 export function addToRecent(filePath: string) {

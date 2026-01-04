@@ -192,7 +192,16 @@ export const useOrganStore = defineStore('organ', {
                     exportStore.outputDir = savedState.outputDir;
                     await exportStore.updateDiskInfo();
                 }
-                if (savedState.virtualStops) this.virtualStops = savedState.virtualStops;
+                if (savedState.virtualStops) {
+                    this.virtualStops = savedState.virtualStops;
+                    // Migration: Reset 8.0 multiplier to 1.0 (baseline normalization)
+                    Object.values(this.virtualStops).forEach((vs: any) => {
+                        if (vs.harmonicMultiplier === 8) {
+                            console.log(`[OrganStore] Migrating legacy harmonicMultiplier 8 -> 1 for vs: ${vs.id}`);
+                            vs.harmonicMultiplier = 1;
+                        }
+                    });
+                }
                 if (savedState.recordings) this.recordings = savedState.recordings;
 
                 // Initialize Audio Settings from Save
@@ -213,6 +222,7 @@ export const useOrganStore = defineStore('organ', {
             this.setGlobalVolume(this.globalVolume);
 
             synth.setReleaseMode(this.audioSettings.releaseMode);
+            synth.setLoadingMode(this.audioSettings.loadingMode);
             if (this.audioSettings.releaseMode === 'convolution') {
                 synth.configureReverb(this.audioSettings.reverbLength, this.audioSettings.reverbMix);
             }
@@ -347,6 +357,7 @@ export const useOrganStore = defineStore('organ', {
 
         async setLoadingMode(mode: 'none' | 'quick' | 'full') {
             this.audioSettings.loadingMode = mode;
+            synth.setLoadingMode(mode);
             this.saveInternalState();
         },
 
@@ -381,22 +392,21 @@ export const useOrganStore = defineStore('organ', {
 
         async triggerPreload(mode: 'quick' | 'full') {
             if (!this.organData) return;
-            const stops = this.enabledStopIds; // Set of strings
-            console.log(`[OrganStore] Triggering ${mode} preload for ${stops.size} stops...`);
+            const stops = this.organData.stops; // All stops
+            const stopIds = Object.keys(stops);
+
+            console.log(`[OrganStore] Triggering ${mode} preload for all ${stopIds.length} stops...`);
 
             this.isLoadingOrgan = true; // Use this to show spinner/progress
             this.renderStatus = `Preloading samples(${mode})...`;
             this.extractionProgress = 0;
-
-            // Convert to array for iteration
-            const stopIds = Array.from(stops);
 
             // 1. Calculate Total Pipes first
             let totalPipes = 0;
             const pipesToLoad: { stopId: string, pipe: any, rankId: string, isRelease: boolean }[] = [];
 
             stopIds.forEach(stopId => {
-                const stop = this.organData.stops[stopId];
+                const stop = stops[stopId];
                 if (!stop) return;
                 stop.rankIds.forEach((rankId: string) => {
                     const rank = this.organData.ranks[rankId];

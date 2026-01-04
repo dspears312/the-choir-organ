@@ -209,6 +209,10 @@ export default defineConfig((/* ctx */) => {
           {
             from: 'src-electron/remote/dist',
             to: 'remote/dist'
+          },
+          {
+            from: 'src-native/target/release/synth-engine',
+            to: 'bin/synth-engine'
           }
         ],
         publish: {

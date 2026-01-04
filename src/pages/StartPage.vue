@@ -69,6 +69,15 @@
                         <q-separator dark class="q-mb-md" />
 
                         <div class="column q-gutter-y-md">
+                            <q-btn outline color="info" label="Clear Definition Cache" icon="mdi-cached"
+                                @click="handleClearCache" align="left" class="full-width" />
+
+                            <q-btn outline color="secondary" label="Reset Organ State" icon="mdi-database-refresh"
+                                @click="handleClearState" align="left" class="full-width" />
+
+                            <q-btn outline color="amber-7" label="Clear Audio Settings" icon="mdi-refresh"
+                                @click="handleClearAudioSettings" align="left" class="full-width" />
+
                             <q-btn outline color="warning" label="Remove from List" icon="mdi-close"
                                 @click="handleRemoveList" align="left" class="full-width"
                                 hint="Removes this item from the recent list. Files remain on disk." />
@@ -126,10 +135,6 @@
                             </q-item-section>
                             <q-item-section side>
                                 <div class="row q-gutter-x-xs">
-                                    <q-btn flat round color="grey-6" icon="mdi-cog"
-                                        @click.stop="openSettingsDialog(file)">
-                                        <q-tooltip>Configure Audio & Ranks</q-tooltip>
-                                    </q-btn>
                                     <q-btn flat round color="grey-5" icon="mdi-dots-vertical"
                                         @click.stop="openManagementDialog(file)" />
                                 </div>
@@ -145,9 +150,6 @@
                     </div>
                 </div>
             </div>
-            <!-- Shared Audio Settings -->
-            <SharedAudioSettingsDialog v-model="showAudioSettings" :organ-path="selectedSettingsOrgan"
-                @apply="applyAudioSettings" />
         </div>
     </q-page>
 </template>
@@ -157,7 +159,7 @@ import { ref, onMounted, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useOrganStore } from 'src/stores/organ';
 import { useQuasar } from 'quasar';
-import SharedAudioSettingsDialog from 'src/components/SharedAudioSettingsDialog.vue';
+import { DEFAULT_AUDIO_SETTINGS } from 'src/types/models';
 
 const organStore = useOrganStore();
 const router = useRouter();
@@ -165,18 +167,60 @@ const slide = ref(0);
 const $q = useQuasar();
 
 const isInfoDialogVisible = ref(false);
-const showAudioSettings = ref(false);
 const selectedOrgan = ref<{ path: string; name: string; size: string | null } | null>(null);
-const selectedSettingsOrgan = ref('');
 const isCalculating = ref(false);
 
-async function applyAudioSettings(settings: AudioSettings) {
-    let state = await window.myApi.loadOrganState(selectedSettingsOrgan.value);
-    console.log(settings);
-    console.log(selectedSettingsOrgan.value)
-    state.audioSettings = settings;
-    console.log(state)
-    await window.myApi.saveOrganState(selectedSettingsOrgan.value, JSON.parse(JSON.stringify(state)));
+async function handleClearAudioSettings() {
+    if (!selectedOrgan.value) return;
+    const file = selectedOrgan.value.path;
+
+    $q.dialog({
+        title: 'Clear Audio Settings?',
+        message: `Are you sure you want to reset all audio settings and rank selections for <b>${selectedOrgan.value.name}</b>?`,
+        html: true,
+        dark: true,
+        ok: { label: 'Clear', color: 'amber-7', flat: true },
+        cancel: { label: 'Cancel', color: 'white', flat: true }
+    }).onOk(async () => {
+        let state = await window.myApi.loadOrganState(file) || {};
+        state.audioSettings = DEFAULT_AUDIO_SETTINGS;
+        await window.myApi.saveOrganState(file, JSON.parse(JSON.stringify(state)));
+        $q.notify({ type: 'positive', message: 'Audio settings cleared' });
+    });
+}
+
+function handleClearCache() {
+    if (!selectedOrgan.value) return;
+    const file = selectedOrgan.value.path;
+
+    $q.dialog({
+        title: 'Clear Definition Cache?',
+        message: `This will force the engine to re-parse the original ODF file for <b>${selectedOrgan.value.name}</b> next time it is loaded.<br><br>Use this if you have modified the ODF file manually.`,
+        html: true,
+        dark: true,
+        ok: { label: 'Clear Cache', color: 'info', flat: true },
+        cancel: { label: 'Cancel', color: 'white', flat: true }
+    }).onOk(async () => {
+        await window.myApi.clearOrganCache(file);
+        $q.notify({ type: 'positive', message: 'Cache cleared successfully' });
+    });
+}
+
+function handleClearState() {
+    if (!selectedOrgan.value) return;
+    const file = selectedOrgan.value.path;
+
+    $q.dialog({
+        title: 'Reset Organ State?',
+        message: `This will permanently delete all saved banks, stop volumes, and virtual stops for <b>${selectedOrgan.value.name}</b>.<br><br>This action cannot be undone.`,
+        html: true,
+        dark: true,
+        ok: { label: 'Reset State', color: 'secondary', flat: true },
+        cancel: { label: 'Cancel', color: 'white', flat: true }
+    }).onOk(async () => {
+        await window.myApi.clearOrganState(file);
+        $q.notify({ type: 'positive', message: 'Organ state reset successfully' });
+    });
 }
 
 function getDisplayName(path: string) {
@@ -216,11 +260,6 @@ async function openManagementDialog(file: string) {
     } finally {
         isCalculating.value = false;
     }
-}
-
-function openSettingsDialog(file: string) {
-    selectedSettingsOrgan.value = file;
-    showAudioSettings.value = true;
 }
 
 function handleRemoveList() {

@@ -422,7 +422,8 @@ export function parseHauptwerk(filePath: string): OrganData {
             }
         }
 
-        const harmonicNumber = parseInt(p.f || '8'); // Hauptwerk uses 'f' for harmonic/footage mapping (where 8 = 8')
+        const fVal = parseFloat(p.f || '8');
+        const harmonicNumber = fVal > 0 ? 8.0 / fVal : 1.0;
 
         if (!organData.ranks[rankID]) return;
 

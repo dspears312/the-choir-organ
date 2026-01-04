@@ -9,7 +9,8 @@
   "scripts": {
     "dev": "quasar dev -m electron",
     "dev:remote": "vite -c vite.remote.config.ts",
-    "build": "npm run build:remote && npm run build:workers && quasar build -m electron",
+    "build": "npm run build:rust && npm run build:remote && npm run build:workers && quasar build -m electron",
+    "build:rust": "cd src-native && cargo build --release",
     "build:remote": "vite build -c vite.remote.config.ts",
     "build:workers": "esbuild src-electron/workers/*.ts --bundle --platform=node --format=esm --outdir=src-electron/workers-dist",
     "corrupt": "xattr -w com.apple.quarantine \"0081;64a5196e;Chrome;39082C96-5743-4Cbf-8D82-2F1D06900000\" \"dist/electron/Packaged/mac-universal/The Choir Organ.app\" && codesign --remove-signature \"dist/electron/Packaged/mac-universal/The Choir Organ.app\"",

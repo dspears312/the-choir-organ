@@ -98,6 +98,11 @@ export class SynthEngine {
         }
     }
 
+    setLoadingMode(mode: 'none' | 'quick' | 'full') {
+        // JS engine doesn't use this currently as it manages memory differently,
+        // but it's needed for interface parity.
+    }
+
     setReleaseMode(mode: 'authentic' | 'convolution' | 'none') {
         this.releaseMode = mode;
         this.useReleaseSamples = mode === 'authentic';
@@ -349,7 +354,7 @@ export class SynthEngine {
             }
         }
 
-        const harmonicCents = 1200 * Math.log2(harmonicNumber / 8);
+        const harmonicCents = 1200 * Math.log2(harmonicNumber);
         // DO NOT USE pipe tuning from ODF. It is broken and will cause heinous audio errors.
         // We only use the virtual stop pitchOffsetCents.
         const totalCents = wavTuning + harmonicCents + pitchOffsetCents;
@@ -638,7 +643,7 @@ export class SynthEngine {
                 const relSource = this.context.createBufferSource();
                 relSource.buffer = relBuffer;
 
-                const harmonicCents = 1200 * Math.log2(voice.harmonicNumber / 8);
+                const harmonicCents = 1200 * Math.log2(voice.harmonicNumber);
                 // Use stored virtual offsets for release too
                 const totalCents = (voice.wavTuning || 0) + harmonicCents + (voice.pitchOffsetCents || 0);
                 if (!isNaN(totalCents) && totalCents !== 0) {

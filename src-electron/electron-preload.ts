@@ -29,6 +29,8 @@ contextBridge.exposeInMainWorld('myApi', {
     listDir: (path: string) => ipcRenderer.invoke('list-dir', path),
     saveOrganState: (odfPath: string, state: any) => ipcRenderer.invoke('save-organ-state', odfPath, state),
     loadOrganState: (odfPath: string) => ipcRenderer.invoke('load-organ-state', odfPath),
+    clearOrganCache: (odfPath: string) => ipcRenderer.invoke('clear-organ-cache', odfPath),
+    clearOrganState: (odfPath: string) => ipcRenderer.invoke('clear-organ-state', odfPath),
     saveMidiFile: (buffer: ArrayBuffer, filename: string) => ipcRenderer.invoke('save-midi-file', { buffer, filename }),
     openMidiFile: () => ipcRenderer.invoke('open-midi-file'),
     parseOdf: (odfPath: string) => ipcRenderer.invoke('parse-odf', odfPath),
@@ -211,5 +213,10 @@ contextBridge.exposeInMainWorld('myApi', {
         ipcRenderer.on('devtools-change', listener);
         return () => ipcRenderer.removeListener('devtools-change', listener);
     },
-    isDevToolsOpened: () => ipcRenderer.invoke('is-devtools-opened')
+    isDevToolsOpened: () => ipcRenderer.invoke('is-devtools-opened'),
+
+    // Rust Engine
+    spawnRustEngine: () => ipcRenderer.invoke('spawn-rust-engine'),
+    killRustEngine: () => ipcRenderer.invoke('kill-rust-engine'),
+    sendRustCommand: (cmd: any) => ipcRenderer.send('send-rust-command', cmd)
 });

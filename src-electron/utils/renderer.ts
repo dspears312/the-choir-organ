@@ -60,7 +60,7 @@ export async function renderNote(
                 }
             }
 
-            const harmonicCents = 1200 * Math.log2(pipe.harmonicNumber / 8);
+            const harmonicCents = 1200 * Math.log2(pipe.harmonicNumber);
             // We ignore pipe.tuning as per user instruction and use virtual pitchOffsetCents
             const totalCents = (pipe.pitchOffsetCents || 0) + wavTuningPercent + harmonicCents;
             const pitchRate = isNaN(totalCents) ? 1.0 : Math.pow(2, totalCents / 1200);
@@ -246,7 +246,7 @@ export async function renderPerformance(
                                         wavTuningPercent -= fractionCents;
                                     }
                                 }
-                                const harmonicCents = 1200 * Math.log2(rp.harmonicNumber / 8);
+                                const harmonicCents = 1200 * Math.log2(rp.harmonicNumber);
                                 const totalCents = (rp.pitchOffsetCents || 0) + wavTuningPercent + harmonicCents;
                                 const pitchRate = isNaN(totalCents) ? 1.0 : Math.pow(2, totalCents / 1200);
                                 const rateRatio = (wavInfo.sampleRate || 44100) / sampleRate;

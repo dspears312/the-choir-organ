@@ -41,3 +41,5 @@ yarn-error.log*
 # Remote build artifacts
 src-electron/remote/dist
 src-electron/workers-dist
+
+src-native/target

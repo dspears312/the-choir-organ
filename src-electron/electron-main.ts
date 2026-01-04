@@ -1,5 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog, protocol, net, shell } from 'electron';
 import { WorkerFactory } from './utils/worker-factory';
+import { spawn, ChildProcess } from 'child_process';
+import { match } from 'assert';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -10,7 +12,7 @@ import { OrganData, parseODF } from './utils/odf-parser';
 import { parseHauptwerk } from './utils/hauptwerk-parser';
 import { renderNote, renderPerformance } from './utils/renderer';
 import { readWav } from './utils/wav-reader';
-import { addToRecent, getRecents, loadOrganState, loadSettings, removeFromRecent, saveOrganState, saveSettings, loadOrganCache, saveOrganCache } from './utils/persistence';
+import { addToRecent, getRecents, loadOrganState, loadSettings, removeFromRecent, saveOrganState, saveSettings, loadOrganCache, saveOrganCache, clearOrganCache, clearOrganState } from './utils/persistence';
 import { handleRarExtraction } from './utils/archive-handler';
 import { scanOrganDependencies } from './utils/organ-manager';
 import { createPartialWav } from './utils/partial-wav';
@@ -87,6 +89,7 @@ protocol.registerSchemesAsPrivileged([
 
 let mainWindow: BrowserWindow | undefined;
 let workerWindows: BrowserWindow[] = [];
+let rustProcess: ChildProcess | null = null;
 let isCancellationRequested = false;
 let memoryInterval: NodeJS.Timeout | null = null;
 
@@ -441,6 +444,16 @@ ipcMain.handle('select-odf-file', async (event, specificPath?: string) => {
 
 ipcMain.handle('cancel-rendering', () => {
   isCancellationRequested = true;
+});
+
+ipcMain.handle('clear-organ-cache', (event, odfPath) => {
+  clearOrganCache(odfPath);
+  return { success: true };
+});
+
+ipcMain.handle('clear-organ-state', (event, odfPath) => {
+  clearOrganState(odfPath);
+  return { success: true };
 });
 
 ipcMain.handle('render-bank', async (event, { bankNumber, bankName, combination, organData, outputDir: initialOutputDir }) => {
@@ -1160,3 +1173,82 @@ if (!gotTheLock) {
     }
   });
 }
+
+// Rust Engine Handlers
+ipcMain.handle('spawn-rust-engine', async () => {
+  if (rustProcess) {
+    console.log('[Main] Rust engine already running');
+    return { success: true };
+  }
+
+  let binaryPath = '';
+  if (process.env.DEV) {
+    binaryPath = path.resolve(process.cwd(), 'src-native/target/release/synth-engine');
+  } else {
+    // Prod path
+    binaryPath = path.resolve(process.resourcesPath, 'bin', 'synth-engine');
+    if (process.platform === 'win32') binaryPath += '.exe';
+  }
+
+  console.log(`[Main] Spawning Rust engine: ${binaryPath}`);
+
+  try {
+    if (!fs.existsSync(binaryPath)) {
+      throw new Error(`Binary not found at ${binaryPath}`);
+    }
+
+    rustProcess = spawn(binaryPath, [], {
+      stdio: ['pipe', 'pipe', 'inherit'], // pipe stdin and stdout
+      env: { ...process.env, RUST_LOG: 'info' }
+    });
+
+    if (rustProcess.stdout) {
+      rustProcess.stdout.on('data', (data) => {
+        const lines = data.toString().split('\n');
+        for (const line of lines) {
+          if (!line.trim().startsWith('{')) continue;
+          try {
+            const msg = JSON.parse(line);
+            if (msg.type === 'sample-loaded') {
+              batchedSampleCount++;
+              const now = Date.now();
+              if (now - lastBatchTime > BATCH_INTERVAL_MS) {
+                sendBatchedProgress();
+              }
+            }
+          } catch (e) {
+            // Ignore non-json
+          }
+        }
+      });
+    }
+
+    rustProcess.on('exit', (code) => {
+      console.log(`[Main] Rust engine exited with code ${code}`);
+      rustProcess = null;
+    });
+
+    rustProcess.on('error', (err) => {
+      console.error(`[Main] Rust engine error:`, err);
+    });
+
+    return { success: true };
+  } catch (e: any) {
+    console.error(e);
+    return { error: e.message };
+  }
+});
+
+ipcMain.handle('kill-rust-engine', () => {
+  if (rustProcess) {
+    rustProcess.kill();
+    rustProcess = null;
+  }
+  return { success: true };
+});
+
+ipcMain.on('send-rust-command', (event, command) => {
+  if (rustProcess && rustProcess.stdin) {
+    rustProcess.stdin.write(JSON.stringify(command) + '\n');
+  }
+});

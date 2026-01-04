@@ -21,10 +21,12 @@ export interface IElectronAPI {
   onExtractionStart: (callback: (event: any) => void) => () => void;
   listDir: (path: string) => Promise<string[]>;
   saveOrganState: (odfPath: string, state: any) => Promise<void>;
+  loadOrganState: (odfPath: string) => Promise<any>;
+  clearOrganCache: (odfPath: string) => Promise<any>;
+  clearOrganState: (odfPath: string) => Promise<any>;
   loadUserSettings: () => Promise<any>;
   saveUserSettings: (settings: any) => Promise<void>;
   parseOdf: (odfPath: string) => Promise<any>;
-  loadOrganState: (odfPath: string) => Promise<any>;
   renderPerformance: (recording: any, organData: any, renderTails: boolean) => Promise<any>;
   saveMidiFile: (buffer: ArrayBuffer, filename: string) => Promise<any>;
   openMidiFile: () => Promise<{ buffer: ArrayBuffer, filename: string } | { canceled: true } | { error: string }>;
@@ -87,6 +89,11 @@ export interface IElectronAPI {
   onWindowStateChanged?: (callback: (state: string) => void) => () => void;
   onDevToolsChange?: (callback: (isOpen: boolean) => void) => () => void;
   isDevToolsOpened?: () => Promise<boolean>;
+
+  // Rust Engine
+  spawnRustEngine: () => Promise<{ success?: boolean; error?: string }>;
+  killRustEngine: () => Promise<{ success?: boolean; error?: string }>;
+  sendRustCommand: (cmd: any) => void;
 }
 
 declare global {

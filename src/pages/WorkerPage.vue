@@ -141,6 +141,10 @@ async function handleCommand(cmd: any) {
             log(`Setting release mode: ${cmd.mode}`);
             synth.setReleaseMode(cmd.mode);
             break;
+        case 'set-loading-mode':
+            log(`Setting loading mode: ${cmd.mode}`);
+            synth.setLoadingMode(cmd.mode);
+            break;
         case 'configure-reverb':
             log(`Configuring reverb: Length=${cmd.length}, Mix=${cmd.mix}`);
             synth.configureReverb(cmd.length, cmd.mix);

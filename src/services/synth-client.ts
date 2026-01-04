@@ -7,6 +7,9 @@ export class SynthClient {
     // Map stopId to workerIndex
     private stopToWorker: Record<string, number> = {};
     private isDistributed = false;
+    private isRustEngine = false;
+    private loadingMode: 'none' | 'quick' | 'full' = 'full';
+    private releaseMode: 'authentic' | 'convolution' | 'none' = 'authentic';
 
     private cachedGlobalGain = 0;
     private cachedReleaseMode: 'authentic' | 'convolution' | 'none' = 'authentic';
@@ -24,6 +27,19 @@ export class SynthClient {
         this.workerCount = workerCount;
         this.isDistributed = true;
         this.stopToWorker = {};
+
+        // Check settings for Rust Engine
+        const settings = await window.myApi.loadUserSettings();
+        this.isRustEngine = !!settings?.useRustEngine;
+
+        if (this.isRustEngine) {
+            console.log('[SynthClient] Initializing EXPERIMENTAL Rust Engine...');
+            await window.myApi.spawnRustEngine();
+            // Sync initial settings
+            this.setGlobalGain(this.cachedGlobalGain);
+            this.setReleaseMode(this.cachedReleaseMode);
+            return;
+        }
 
         // Set up listener BEFORE creating workers to avoid race conditions
         const readyPromise = new Promise<void>((resolve) => {
@@ -93,6 +109,16 @@ export class SynthClient {
     }
 
     async loadSample(stopId: string, pipePath: string, type: 'partial' | 'full' = 'partial', params?: { maxDuration?: number, cropToLoop?: boolean }): Promise<void> {
+        if (this.isRustEngine) {
+            window.myApi.sendRustCommand({
+                type: 'load-sample',
+                stopId,
+                path: pipePath,
+                maxDuration: params?.maxDuration
+            });
+            return;
+        }
+
         if (!this.isDistributed) {
             return synth.loadSample(stopId, pipePath, type, params);
         }
@@ -142,6 +168,34 @@ export class SynthClient {
         // Wait, the plan said "SynthClient only assigns stops belonging to enabled ranks".
         // But `noteOn` is per voice.
 
+        if (this.isRustEngine) {
+            // Trigger background full load if in Quick mode
+            if (this.loadingMode === 'quick') {
+                window.myApi.sendRustCommand({
+                    type: 'load-sample',
+                    stopId,
+                    path: pipePath,
+                }); // No maxDuration = full
+            }
+
+            window.myApi.sendRustCommand({
+                type: 'note-on',
+                note,
+                stopId,
+                path: pipePath,
+                releasePath,
+                gainDb,
+                isPedal,
+                volume,
+                tuning,
+                harmonicNumber,
+                pitchOffsetCents,
+                renderingNote,
+                delay
+            });
+            return;
+        }
+
         if (!this.isDistributed) {
             synth.noteOn(note, stopId, pipePath, releasePath, volume, gainDb, tuning, harmonicNumber, isPedal, manualId, activeTremulants, pitchOffsetCents, renderingNote, delay);
             return;
@@ -168,6 +222,11 @@ export class SynthClient {
     }
 
     noteOff(note: number, stopId: string) {
+        if (this.isRustEngine) {
+            window.myApi.sendRustCommand({ type: 'note-off', note, stopId });
+            return;
+        }
+
         if (!this.isDistributed) {
             synth.noteOff(note, stopId);
             return;
@@ -182,6 +241,12 @@ export class SynthClient {
 
     setGlobalGain(db: number) {
         this.cachedGlobalGain = db;
+
+        if (this.isRustEngine) {
+            window.myApi.sendRustCommand({ type: 'set-global-gain', db });
+            return;
+        }
+
         if (!this.isDistributed) {
             synth.setGlobalGain(db);
             return;
@@ -230,6 +295,11 @@ export class SynthClient {
 
     setReleaseMode(mode: 'authentic' | 'convolution' | 'none') {
         this.cachedReleaseMode = mode;
+        if (this.isRustEngine) {
+            window.myApi.sendRustCommand({ type: 'set-release-mode', mode });
+            return;
+        }
+
         if (!this.isDistributed) {
             synth.setReleaseMode(mode);
             return;
@@ -237,6 +307,25 @@ export class SynthClient {
         for (let i = 0; i < this.workerCount; i++) {
             window.myApi.sendWorkerCommand(i, {
                 type: 'set-release-mode',
+                mode
+            });
+        }
+    }
+
+    setLoadingMode(mode: 'none' | 'quick' | 'full') {
+        this.loadingMode = mode;
+        if (this.isRustEngine) {
+            window.myApi.sendRustCommand({ type: 'set-loading-mode', mode });
+            return;
+        }
+
+        if (!this.isDistributed) {
+            synth.setLoadingMode(mode);
+            return;
+        }
+        for (let i = 0; i < this.workerCount; i++) {
+            window.myApi.sendWorkerCommand(i, {
+                type: 'set-loading-mode',
                 mode
             });
         }
@@ -258,6 +347,9 @@ export class SynthClient {
     }
 
     async unload() {
+        if (this.isRustEngine) {
+            await window.myApi.killRustEngine();
+        }
         if (this.isDistributed) {
             await window.myApi.createWorkers(0);
         }

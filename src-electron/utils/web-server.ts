@@ -182,7 +182,8 @@ export function startWebServer(port: number = 56789) {
             ws.on('message', (message: any) => {
                 try {
                     const data = JSON.parse(message.toString());
-                    console.log(`[WebRemote][Instance ${currentId}] Received message:`, data.type);
+                    if (data.type != 'keepalive' && data.type != 'ping')
+                        console.log(`[WebRemote][Instance ${currentId}] Received message:`, data.type);
                     if (data.type === 'toggleStop') {
                         // Forward to renderer
                         if (mainWindowInstance && !mainWindowInstance.isDestroyed()) {
