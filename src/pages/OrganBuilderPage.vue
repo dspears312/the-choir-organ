@@ -363,7 +363,7 @@ const drawerTabs = [
     { id: 'recordings', icon: 'mic', label: 'Record', tooltip: 'Recordings' },
     { id: 'export', icon: 'sd_card', label: 'SD Card', tooltip: 'Tsunami SD Export' },
     { id: 'remote', icon: 'devices', label: 'Remote', tooltip: 'Remote Control & Server' },
-    // { id: 'debug', icon: 'bug_report', label: 'Debug', tooltip: 'System Inspector' },
+    { id: 'debug', icon: 'bug_report', label: 'Debug', tooltip: 'System Inspector' },
     { id: 'settings', icon: 'settings', label: 'Setup', tooltip: 'Audio & RAM Settings' }
 ];
 

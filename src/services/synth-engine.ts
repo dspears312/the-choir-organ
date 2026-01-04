@@ -357,8 +357,6 @@ export class SynthEngine {
             source.playbackRate.value = Math.pow(2, totalCents / 1200);
         }
 
-        console.log(`[Synth] Note On: Note=${note}, Stop=${stopId}, Pipe=${pipePath}`);
-
         const gainNode = this.context.createGain();
         const linearGain = Math.pow(10, (gainDb || 0) / 20);
 
@@ -372,6 +370,8 @@ export class SynthEngine {
 
         source.connect(gainNode);
         gainNode.connect(this.masterGain);
+
+        console.log(`[Synth] Note On: Note=${note}, Stop=${stopId}, Pipe=${pipePath}, Gain=${finalVolume}`);
 
         source.start(this.context.currentTime + (delay / 1000));
 

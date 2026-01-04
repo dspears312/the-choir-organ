@@ -8,6 +8,10 @@ export class SynthClient {
     private stopToWorker: Record<string, number> = {};
     private isDistributed = false;
 
+    private cachedGlobalGain = 0;
+    private cachedReleaseMode: 'authentic' | 'convolution' | 'none' = 'authentic';
+    private cachedReverbParams = { length: 2.0, mix: 0.3 };
+
     constructor() { }
 
     async init(workerCount: number) {
@@ -51,6 +55,15 @@ export class SynthClient {
         await readyPromise;
 
         console.log(`[SynthClient] Initialized ${workerCount} workers`);
+        this.syncWorkers();
+    }
+
+    private syncWorkers() {
+        if (!this.isDistributed) return;
+        // Broadcast cached settings to ensure new workers are in sync
+        this.setGlobalGain(this.cachedGlobalGain);
+        this.setReleaseMode(this.cachedReleaseMode);
+        this.configureReverb(this.cachedReverbParams.length, this.cachedReverbParams.mix);
     }
 
     private getWorkerForStop(stopId: string): number {
@@ -168,6 +181,7 @@ export class SynthClient {
     }
 
     setGlobalGain(db: number) {
+        this.cachedGlobalGain = db;
         if (!this.isDistributed) {
             synth.setGlobalGain(db);
             return;
@@ -215,6 +229,7 @@ export class SynthClient {
     }
 
     setReleaseMode(mode: 'authentic' | 'convolution' | 'none') {
+        this.cachedReleaseMode = mode;
         if (!this.isDistributed) {
             synth.setReleaseMode(mode);
             return;
@@ -228,6 +243,7 @@ export class SynthClient {
     }
 
     configureReverb(length: number, mix: number) {
+        this.cachedReverbParams = { length, mix };
         if (!this.isDistributed) {
             synth.configureReverb(length, mix);
             return;

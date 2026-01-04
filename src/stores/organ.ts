@@ -82,7 +82,13 @@ export const useOrganStore = defineStore('organ', {
     actions: {
         setGlobalVolume(percent: number) {
             this.globalVolume = percent;
-            const db = percent > 0 ? 20 * Math.log10(percent / 100) : -100;
+            let db = percent > 0 ? 20 * Math.log10(percent / 100) : -100;
+
+            // Apply ODF Global Gain (Attenuation)
+            if (this.organData?.globalGain) {
+                db += this.organData.globalGain;
+            }
+
             synth.setGlobalGain(db);
         },
 
@@ -194,7 +200,9 @@ export const useOrganStore = defineStore('organ', {
             }
 
             // 4. Sync Settings to Synth engine
-            synth.setGlobalGain(this.globalVolume > 0 ? 20 * Math.log10(this.globalVolume / 100) : -100);
+            // Apply volume (including ODF gain)
+            this.setGlobalVolume(this.globalVolume);
+
             synth.setReleaseMode(this.audioSettings.releaseMode);
             if (this.audioSettings.releaseMode === 'convolution') {
                 synth.configureReverb(this.audioSettings.reverbLength, this.audioSettings.reverbMix);

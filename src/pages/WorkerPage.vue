@@ -25,12 +25,44 @@ function log(msg: string) {
 }
 
 onMounted(async () => {
+    // Override console for global capturing
+    const originalLog = console.log;
+    const originalWarn = console.warn;
+    const originalError = console.error;
+
+    function formatArgs(args: any[]) {
+        return args.map(arg => {
+            if (typeof arg === 'object') {
+                try {
+                    return JSON.stringify(arg);
+                } catch (e) {
+                    return String(arg);
+                }
+            }
+            return String(arg);
+        }).join(' ');
+    }
+
+    console.log = (...args) => {
+        originalLog(...args);
+        if (window.myApi) window.myApi.logToMain(`[Log] ${formatArgs(args)}`);
+    };
+
+    console.warn = (...args) => {
+        originalWarn(...args);
+        if (window.myApi) window.myApi.logToMain(`[Warn] ${formatArgs(args)}`);
+    };
+
+    console.error = (...args) => {
+        originalError(...args);
+        if (window.myApi) window.myApi.logToMain(`[Error] ${formatArgs(args)}`);
+    };
+
     log('Worker mounted');
 
     // Initialize IPC listeners
     if (window.myApi) {
         status.value = 'Ready';
-        window.myApi.notifyWorkerReady();
 
         // Listen for port transfer
         window.myApi.onWorkerInit((event: any) => {
@@ -42,6 +74,8 @@ onMounted(async () => {
             // Fallback IPC command handling
             handleCommand(command);
         });
+
+        window.myApi.notifyWorkerReady();
 
         // Start Stats Loop
         if (!(window as any).statsStarted) {
