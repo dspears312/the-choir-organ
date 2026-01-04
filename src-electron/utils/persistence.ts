@@ -61,7 +61,7 @@ const DEFAULT_SETTINGS: UserSettings = {
     lastExportDir: '',
     workerCount: 1,
     isWebServerEnabled: false,
-    remoteServerPort: 8080
+    remoteServerPort: 56789
 };
 
 function getSettingsPath(): string {

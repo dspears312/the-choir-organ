@@ -7,7 +7,7 @@ export const useSettingsStore = defineStore('settings', () => {
     const lastExportDir = ref<string>('');
     const workerCount = ref<number>(1);
     const isWebServerEnabled = ref<boolean>(false);
-    const remoteServerPort = ref<number>(8080);
+    const remoteServerPort = ref<number>(56789);
 
     // Actions
     async function loadSettings() {
@@ -17,7 +17,7 @@ export const useSettingsStore = defineStore('settings', () => {
             lastExportDir.value = settings.lastExportDir || '';
             workerCount.value = settings.workerCount || 1;
             isWebServerEnabled.value = settings.isWebServerEnabled || false;
-            remoteServerPort.value = settings.remoteServerPort || 8080;
+            remoteServerPort.value = settings.remoteServerPort || 56789;
         }
     }
 

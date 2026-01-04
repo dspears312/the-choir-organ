@@ -4,7 +4,7 @@ import { renderPerformance } from '../utils/renderer';
 async function run() {
     try {
         console.log('[Worker] Starting render job...');
-        const { recording, organData, outputPath, renderTails } = workerData;
+        const { recording, organData, outputPath, renderTails, banks } = workerData;
         console.log(`[Worker] Output path: ${outputPath}`);
         console.log(`[Worker] Tails: ${renderTails}`);
 
@@ -13,6 +13,7 @@ async function run() {
             organData,
             outputPath,
             renderTails,
+            banks,
             (progress: number) => {
                 if (progress % 10 === 0) console.log(`[Worker] Progress: ${progress}%`);
                 parentPort?.postMessage({ type: 'progress', progress });

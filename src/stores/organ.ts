@@ -48,7 +48,7 @@ export const useOrganStore = defineStore('organ', {
         // Remote Server State
         remoteServerStatus: {
             running: false,
-            port: 8080,
+            port: 56789,
             ips: [] as string[]
         },
         remoteSyncCleanup: null as (() => void) | null,
@@ -540,6 +540,12 @@ export const useOrganStore = defineStore('organ', {
             const stopPlaybackCleanup = window.myApi.onRemoteStopPlayback(() => {
                 this.stopPlayback();
             });
+            const serverErrorCleanup = window.myApi.onRemoteServerError((message: string) => {
+                console.error('[OrganStore] Remote Server Error:', message);
+                this.remoteServerStatus.running = false;
+                const settingsStore = useSettingsStore();
+                settingsStore.saveSettings({ isWebServerEnabled: false });
+            });
 
             this.remoteSyncCleanup = () => {
                 toggleStopCleanup();
@@ -554,6 +560,7 @@ export const useOrganStore = defineStore('organ', {
                 toggleRecordingCleanup();
                 playRecordingCleanup();
                 stopPlaybackCleanup();
+                serverErrorCleanup();
             };
             this.refreshRemoteStatus();
         },

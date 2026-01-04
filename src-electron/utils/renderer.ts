@@ -1,7 +1,5 @@
-import { createRequire } from 'module';
-const require = createRequire(import.meta.url);
-const pkg = require('wavefile');
-const WaveFile = pkg.WaveFile || pkg;
+import wavefile from 'wavefile';
+const { WaveFile } = wavefile;
 import fs from 'fs';
 import path from 'path';
 import { readWav } from './wav-reader';
@@ -138,38 +136,31 @@ export async function renderPerformance(
     organData: any,
     outputPath: string,
     renderTails: boolean,
+    banks: any[] = [],
     onProgress?: (progress: number) => void
 ) {
     const sampleRate = 44100;
 
     // Define events first so we can use them for timing calculation
-    const events = recording.events.sort((a: any, b: any) => a.timestamp - b.timestamp);
+    // Ensure we handle timestamp existence
+    const events = recording.events.sort((a: any, b: any) => (a.timestamp || 0) - (b.timestamp || 0));
 
     // Find start time (First NoteOn)
-    // If we just use events[0], we might get 5 seconds of silence if the user waited to play.
-    // We want to shift everything so the first NOTE starts at 0.
-    // Any stop changes before that should be clamped to 0.
     const firstNoteEvent = events.find((e: any) => e.type === 'noteOn');
     const firstEventTime = firstNoteEvent ? firstNoteEvent.timestamp : (events.length > 0 ? events[0].timestamp : 0);
 
-    // Initial buffer sizing (Safe overestimate)
-    // Original duration was end - start. We keep relative duration but shift start to 0.
-    // So new duration is (original_end - firstEventTime)
-    // But `recording.duration` usually implies total length. 
-    // If we shift events, we must reduce total duration by the shift amount.
-    const shiftedDurationMs = recording.duration - firstEventTime;
+    // Initial buffer sizing
+    const shiftedDurationMs = (recording.duration || 0) - firstEventTime;
     const totalDurationMs = shiftedDurationMs + 10000; // Add 10s tail
     const totalSamples = Math.ceil((totalDurationMs / 1000) * sampleRate);
 
     // Stereo Buffer
-    const outputBuffer = [new Float32Array(totalSamples), new Float32Array(totalSamples)];
+    const outputBuffer: [Float32Array, Float32Array] = [new Float32Array(totalSamples), new Float32Array(totalSamples)];
 
     // Dynamic State Tracking
     const activeStopIds = new Set<string>();
     const activeTremulants: any[] = [];
 
-    // We already have `events` sorted by timestamp.
-    // We iterate through ALL events.
     const totalEvents = events.length;
 
     for (let i = 0; i < totalEvents; i++) {
@@ -191,6 +182,12 @@ export async function renderPerformance(
                 const idx = activeTremulants.indexOf(trem);
                 if (idx !== -1) activeTremulants.splice(idx, 1);
             }
+        } else if (event.type === 'bankChange' && event.bankIndex !== undefined) {
+            if (banks && banks[event.bankIndex]) {
+                const bank = banks[event.bankIndex];
+                activeStopIds.clear();
+                bank.combination.forEach((id: string) => activeStopIds.add(id));
+            }
         } else if (event.type === 'noteOn') {
             const noteOn = event;
             // Find NoteOff
@@ -207,13 +204,9 @@ export async function renderPerformance(
                 durationMs = totalDurationMs - noteOn.timestamp; // Held to end
             }
 
-            // For this note, find all pipes belonging to currently active stops
-            // Optimization: Iterate activeStopIds instead of all stops?
-            // Depends on count. stops count ~50-100? active ~10-20.
-
             activeStopIds.forEach(stopId => {
                 const stop = organData.stops[stopId];
-                if (!stop) return; // specific volume checks removed, relying on active set
+                if (!stop) return;
 
                 const manual = organData.manuals.find((m: any) => String(m.id) === String(stop.manualId));
                 const isPedal = manual?.name.toLowerCase().includes('pedal') || false;
@@ -226,9 +219,8 @@ export async function renderPerformance(
                         const pipe = rank.pipes.find((p: any) => p.midiNote === adjustedNote) || rank.pipes[adjustedNote - 36];
                         if (pipe) {
                             const combinedGain = (manual?.gain || 0) + (stop.gain || 0) + (rank.gain || 0) + (pipe.gain || 0);
-                            const stopVolume = stop.volume || 100; // Default to 100 if missing
+                            const stopVolume = stop.volume || 100;
 
-                            // Prepare render pipe info
                             const rp: RenderPipe = {
                                 path: pipe.wavPath,
                                 volume: stopVolume,
@@ -241,7 +233,6 @@ export async function renderPerformance(
                                 delay: stop.delay || 0
                             };
 
-                            // RENDER LOGIC (Inline or call mix)
                             try {
                                 const wavInfo = readWav(rp.path);
                                 if (!wavInfo.data) return;
@@ -269,12 +260,10 @@ export async function renderPerformance(
                                 }
                                 const finalScale = stopVolumeScale * odfGainLinear * globalGainLinear * pedalScale * FIXED_ATTENUATION;
 
-                                // Mix Sustain and Release with simultaneous crossfade
-                                // We ensure the Release starts fading IN exactly when the Sustain starts fading OUT.
-                                const crossfadeS = renderTails ? 0.05 : 0.2; // 50ms crossfade for tails
+                                const crossfadeS = renderTails ? 0.05 : 0.2;
                                 const sustainDuration = durationMs + (crossfadeS * 1000);
 
-                                const tremulantsForPipe = activeTremulants.filter(t => !t.manualId || String(t.manualId) === String(rp.manualId)); // activeTremulants is global to organData for now
+                                const tremulantsForPipe = activeTremulants.filter(t => !t.manualId || String(t.manualId) === String(rp.manualId));
 
                                 mixSample(
                                     outputBuffer,
@@ -286,10 +275,9 @@ export async function renderPerformance(
                                     tremulantsForPipe,
                                     rp.delay || 0,
                                     crossfadeS,
-                                    0 // No fade in for sustain (attack is natural)
+                                    0
                                 );
 
-                                // Mix Release (Tails)
                                 if (renderTails) {
                                     let relPath = (pipe as any).releasePath;
                                     let relInfo = null;
@@ -298,24 +286,20 @@ export async function renderPerformance(
                                     }
 
                                     if (relInfo && relInfo.data) {
-                                        // To ensure no gap, we start the release exactly at NoteOff (durationMs)
-                                        // The Release Fades IN over 'crossfadeS`.
-                                        // The Sustain Fades OUT over 'crossfadeS' starting at 'durationMs'.
                                         mixSample(
                                             outputBuffer,
                                             relInfo,
                                             shiftedStart + durationMs,
-                                            null, // Play full release
+                                            null,
                                             finalScale,
-                                            playbackRate, // Same pitch
+                                            playbackRate,
                                             tremulantsForPipe,
-                                            0, // Delay
-                                            0.0, // No fade out for release
-                                            crossfadeS // Fade IN for release, simultaneous with sustain fade out
+                                            0,
+                                            0.0,
+                                            crossfadeS
                                         );
                                     }
                                 }
-
                             } catch (e) { console.error(e); }
                         }
                     }
@@ -323,17 +307,15 @@ export async function renderPerformance(
             });
         }
 
-        // Report Progress
-        // if (onProgress && i % 50 === 0) {
-        const progress = Math.round(((i + 1) / totalEvents) * 100);
-        onProgress(progress);
-        // }
+        if (onProgress) {
+            const progress = Math.round(((i + 1) / totalEvents) * 100);
+            onProgress(progress);
+        }
     }
     if (onProgress) onProgress(100);
 
     // Trim End Silence
-    // Scan backwards to find the last signal meeting a threshold
-    const threshold = 0.0001; // Approx -80dB
+    const threshold = 0.0001;
     let lastSignalIndex = 0;
     const len = outputBuffer[0].length;
     for (let i = len - 1; i >= 0; i--) {
@@ -343,20 +325,17 @@ export async function renderPerformance(
         }
     }
 
-    // Add a small safety pad (e.g. 100ms)
     const padSamples = Math.floor(0.1 * sampleRate);
     const trimmedLength = Math.min(len, lastSignalIndex + padSamples);
 
-    // Create final trimmed buffers
     const finalBufferL = outputBuffer[0].slice(0, trimmedLength);
     const finalBufferR = outputBuffer[1].slice(0, trimmedLength);
 
-    // Write Output
-    const int16Buffer = [new Int16Array(trimmedLength), new Int16Array(trimmedLength)];
+    const int16Buffer: [Int16Array, Int16Array] = [new Int16Array(trimmedLength), new Int16Array(trimmedLength)];
     for (let i = 0; i < trimmedLength; i++) {
         for (let channel = 0; channel < 2; channel++) {
             const src = channel === 0 ? finalBufferL : finalBufferR;
-            let sample = src[i];
+            let sample = src[i] || 0;
             if (sample > 1.0) sample = 1.0;
             else if (sample < -1.0) sample = -1.0;
             int16Buffer[channel][i] = Math.round(sample * 32767);

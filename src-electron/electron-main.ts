@@ -325,9 +325,9 @@ async function createWindow() {
     // mainWindow.webContents.openDevTools();
   } else {
     // we're on production; no access to devtools pls
-    mainWindow.webContents.on('devtools-opened', () => {
-      mainWindow?.webContents.closeDevTools();
-    });
+    // mainWindow.webContents.on('devtools-opened', () => {
+    //   mainWindow?.webContents.closeDevTools();
+    // });
   }
 
   startMemoryMonitoring(mainWindow);
@@ -339,6 +339,20 @@ async function createWindow() {
       clearInterval(memoryInterval);
       memoryInterval = null;
     }
+  });
+
+  // Window State Events
+  mainWindow.on('maximize', () => mainWindow?.webContents.send('window-state-changed', 'maximized'));
+  mainWindow.on('unmaximize', () => mainWindow?.webContents.send('window-state-changed', 'normal'));
+  mainWindow.on('enter-full-screen', () => mainWindow?.webContents.send('window-state-changed', 'fullscreen'));
+  mainWindow.on('leave-full-screen', () => mainWindow?.webContents.send('window-state-changed', 'normal'));
+
+  // DevTools Events
+  mainWindow.webContents.on('devtools-opened', () => {
+    mainWindow?.webContents.send('devtools-change', true);
+  });
+  mainWindow.webContents.on('devtools-closed', () => {
+    mainWindow?.webContents.send('devtools-change', false);
   });
 
   // Window Controls
@@ -358,6 +372,10 @@ async function createWindow() {
     mainWindow?.close();
   });
 }
+
+ipcMain.handle('is-devtools-opened', () => {
+  return mainWindow?.webContents.isDevToolsOpened();
+});
 
 // IPC Handlers
 ipcMain.handle('select-odf-file', async (event, specificPath?: string) => {
@@ -540,7 +558,7 @@ ipcMain.handle('render-bank', async (event, { bankNumber, bankName, combination,
   return { status: 'success', outputDir };
 });
 
-ipcMain.handle('render-performance', async (event, { recording, organData, renderTails }) => {
+ipcMain.handle('render-performance', async (event, { recording, organData, renderTails, banks }) => {
   const result = await dialog.showSaveDialog(mainWindow!, {
     title: 'Save Performance Recording',
     defaultPath: `${recording.name}.wav`,
@@ -557,7 +575,8 @@ ipcMain.handle('render-performance', async (event, { recording, organData, rende
         recording,
         organData,
         outputPath: result.filePath,
-        renderTails
+        renderTails,
+        banks
       },
       onProgress: (progress) => {
         mainWindow?.webContents.send('render-progress', { status: 'Rendering Performance...', progress });
@@ -1037,93 +1056,107 @@ autoUpdater.on('error', (err: any) => {
   mainWindow?.webContents.send('update-error', err.message);
 });
 
-void app.whenReady().then(() => {
-  // Protocol for streaming local tsunami samples
-  protocol.handle('tsunami', (request) => {
-    const url = new URL(request.url);
-    const filePath = decodeURIComponent(url.pathname);
-    console.log('Tsunami Stream Request:', { url: request.url, filePath });
+const gotTheLock = app.requestSingleInstanceLock();
 
-    try {
-      if (!fs.existsSync(filePath)) {
-        console.warn(`File not found for tsunami stream: ${filePath}`);
-        return new Response('File not found', { status: 404 });
-      }
-      return net.fetch(pathToFileURL(filePath).toString());
-    } catch (e) {
-      console.error('Tsunami protocol error:', e);
-      return new Response('Error', { status: 500 });
+if (!gotTheLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    // Someone tried to run a second instance, we should focus our window.
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
     }
   });
 
-  // High-performance protocol for organ samples
-  protocol.handle('organ-sample', async (request) => {
-    try {
-      const url = new URL(request.url);
-      const filePath = url.searchParams.get('path');
-      const type = url.searchParams.get('type') as 'partial' | 'full';
-      const maxDurationStr = url.searchParams.get('maxDuration');
-      const maxDuration = maxDurationStr ? parseFloat(maxDurationStr) : undefined;
-      const cropToLoop = url.searchParams.get('cropToLoop') === 'true';
-
-      if (!filePath) {
-        return new Response('Missing path', { status: 400 });
-      }
-
-      // Check if we need special processing (Partial, Quick Load, or Convolution Crop)
-      if (type === 'partial' || cropToLoop || maxDuration) {
-        const options: PartialWavOptions = {
-          cropToLoop,
-          maxDuration: maxDuration ?? (type === 'partial' ? 0.5 : undefined)
-        };
-
-        const partialBuffer = createPartialWav(decodeURIComponent(filePath), options);
-        if (partialBuffer) {
-          return new Response(partialBuffer, { headers: { 'Content-Type': 'audio/wav' } });
-        }
-      }
-
-      // Default: Serve full file efficiently (Stream)
-      return net.fetch(pathToFileURL(decodeURIComponent(filePath)).toString());
-    } catch (e) {
-      console.error('Organ-sample protocol error:', e);
-      return new Response('Internal error', { status: 500 });
-    }
-  });
-
-  // Protocol for loading organ console images (BMP/PNG/JPG)
-  protocol.handle('organ-img', (request) => {
-    try {
+  void app.whenReady().then(() => {
+    // Protocol for streaming local tsunami samples
+    protocol.handle('tsunami', (request) => {
       const url = new URL(request.url);
       const filePath = decodeURIComponent(url.pathname);
+      console.log('Tsunami Stream Request:', { url: request.url, filePath });
 
-      if (!fs.existsSync(filePath)) {
-        console.warn(`Organ image not found: ${filePath}`);
-        return new Response('File not found', { status: 404 });
+      try {
+        if (!fs.existsSync(filePath)) {
+          console.warn(`File not found for tsunami stream: ${filePath}`);
+          return new Response('File not found', { status: 404 });
+        }
+        return net.fetch(pathToFileURL(filePath).toString());
+      } catch (e) {
+        console.error('Tsunami protocol error:', e);
+        return new Response('Error', { status: 500 });
       }
+    });
 
-      return net.fetch(pathToFileURL(filePath).toString());
-    } catch (e) {
-      console.error('Organ-img protocol error:', e);
-      return new Response('Internal error', { status: 500 });
-    }
+    // High-performance protocol for organ samples
+    protocol.handle('organ-sample', async (request) => {
+      try {
+        const url = new URL(request.url);
+        const filePath = url.searchParams.get('path');
+        const type = url.searchParams.get('type') as 'partial' | 'full';
+        const maxDurationStr = url.searchParams.get('maxDuration');
+        const maxDuration = maxDurationStr ? parseFloat(maxDurationStr) : undefined;
+        const cropToLoop = url.searchParams.get('cropToLoop') === 'true';
+
+        if (!filePath) {
+          return new Response('Missing path', { status: 400 });
+        }
+
+        // Check if we need special processing (Partial, Quick Load, or Convolution Crop)
+        if (type === 'partial' || cropToLoop || maxDuration) {
+          const options: PartialWavOptions = {
+            cropToLoop,
+            maxDuration: maxDuration ?? (type === 'partial' ? 0.5 : undefined)
+          };
+
+          const partialBuffer = createPartialWav(decodeURIComponent(filePath), options);
+          if (partialBuffer) {
+            return new Response(partialBuffer, { headers: { 'Content-Type': 'audio/wav' } });
+          }
+        }
+
+        // Default: Serve full file efficiently (Stream)
+        return net.fetch(pathToFileURL(decodeURIComponent(filePath)).toString());
+      } catch (e) {
+        console.error('Organ-sample protocol error:', e);
+        return new Response('Internal error', { status: 500 });
+      }
+    });
+
+    // Protocol for loading organ console images (BMP/PNG/JPG)
+    protocol.handle('organ-img', (request) => {
+      try {
+        const url = new URL(request.url);
+        const filePath = decodeURIComponent(url.pathname);
+
+        if (!fs.existsSync(filePath)) {
+          console.warn(`Organ image not found: ${filePath}`);
+          return new Response('File not found', { status: 404 });
+        }
+
+        return net.fetch(pathToFileURL(filePath).toString());
+      } catch (e) {
+        console.error('Organ-img protocol error:', e);
+        return new Response('Internal error', { status: 500 });
+      }
+    });
+
+    createWindow();
+    // Check for updates after a short delay on startup
+    setTimeout(() => {
+      autoUpdater.checkForUpdatesAndNotify().catch((err: any) => {
+        console.error('Initial check for updates failed:', err);
+      });
+    }, 3000);
   });
 
-  createWindow();
-  // Check for updates after a short delay on startup
-  setTimeout(() => {
-    autoUpdater.checkForUpdatesAndNotify().catch((err: any) => {
-      console.error('Initial check for updates failed:', err);
-    });
-  }, 3000);
-});
+  app.on('window-all-closed', () => {
+    app.quit();
+  });
 
-app.on('window-all-closed', () => {
-  app.quit();
-});
-
-app.on('activate', () => {
-  if (mainWindow === undefined) {
-    void createWindow();
-  }
-});
+  app.on('activate', () => {
+    if (mainWindow === undefined) {
+      void createWindow();
+    }
+  });
+}

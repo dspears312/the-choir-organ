@@ -2,7 +2,7 @@
     <q-page class="organ-page text-white column no-wrap">
         <!-- Organ Console -->
         <!-- Toolbar Portal (Teleported to MainLayout) -->
-        <Teleport to="#main-toolbar-portal">
+        <Teleport to="#main-toolbar-portal" v-if="isMounted">
             <div class="row no-wrap items-center full-width">
                 <!-- <q-btn flat round icon="arrow_back" color="grey-6" @click="goBack" class="q-mr-md" /> -->
                 <div class="row items-center q-gutter-x-sm col justify-end">
@@ -187,15 +187,33 @@ const router = useRouter();
 const route = useRoute();
 const activeTab = ref('basic');
 const showVsDialog = ref(false);
+const isMounted = ref(false);
 
 
 const isDev = process.env.DEV;
 
 
 
+const isDevToolsOpen = ref(false);
+
 // Cleanup removed
 
 onMounted(async () => {
+    isMounted.value = true;
+
+    // Listen for devtools
+    if ((window as any).myApi?.onDevToolsChange) {
+        (window as any).myApi.onDevToolsChange((isOpen: boolean) => {
+            isDevToolsOpen.value = isOpen;
+        });
+        // Initial check? We might need an IPC to ask? 
+        // Or main process sends it eagerly?
+        // Let's assume we can get initial state, or default false.
+        // Actually, we can ask for it.
+        if ((window as any).myApi?.isDevToolsOpened) {
+            isDevToolsOpen.value = await (window as any).myApi.isDevToolsOpened();
+        }
+    }
     const organPath = route.query.file as string;
     if (organPath) {
         await organStore.startOrgan(organPath);
@@ -240,10 +258,12 @@ const filteredScreens = computed(() => {
         let title = screen.name.toLowerCase();
         if (title.includes('noise')) return false;
         if (title.includes('wind')) return false;
-        if (title.includes('blow')) return false;
-        if (title.includes('cresc')) return false;
+        if (title.includes('blow')) return false; // blower
+        if (title.includes('cresc')) return false; // crescendo
         if (title.includes('detun')) return false; // detune or detuning
         if (title.includes('voic')) return false; // voice or voicing
+        if (title.includes('mix')) return false; // mix or mixing
+        if (title.includes('info')) return false; // info or information
         return true;
     });
 });
@@ -285,7 +305,6 @@ const ramColor = computed(() => {
 
 let ramListenerCleanup: (() => void) | null = null;
 
-
 // Virtual Stop logic
 const vsForm = ref({
     id: undefined as string | undefined, // undefined for new, set for edit
@@ -297,10 +316,6 @@ const vsForm = ref({
     noteOffset: 0,
     delay: 0
 });
-
-function goBack() {
-    router.push('/');
-}
 
 function openCreateVirtualStop(stopId: string) {
     const stop = organStore.organData?.stops[stopId];
@@ -358,29 +373,20 @@ function getVirtualStopsFor(stopId: string) {
     return organStore.virtualStops.filter(v => v.originalStopId === stopId);
 }
 
-const drawerTabs = [
-    { id: 'combinations', icon: 'mdi-format-list-bulleted', label: 'Banks', tooltip: 'Combination Banks' },
-    { id: 'recordings', icon: 'mdi-microphone', label: 'Record', tooltip: 'Recordings' },
-    { id: 'export', icon: 'mdi-sd', label: 'SD Card', tooltip: 'Tsunami SD Export' },
-    { id: 'remote', icon: 'mdi-devices', label: 'Remote', tooltip: 'Remote Control & Server' },
-    { id: 'debug', icon: 'mdi-bug', label: 'Debug', tooltip: 'System Inspector' },
-    { id: 'settings', icon: 'mdi-cog', label: 'Setup', tooltip: 'Audio & RAM Settings' }
-];
+const drawerTabs = computed(() => {
+    const tabs = [
+        { id: 'combinations', icon: 'mdi-view-list', label: 'Banks', tooltip: 'Combination Banks' },
+        { id: 'recordings', icon: 'mdi-microphone', label: 'Record', tooltip: 'Recordings' },
+        { id: 'export', icon: 'mdi-sd', label: 'SD Card', tooltip: 'Tsunami SD Export' },
+        { id: 'settings', icon: 'mdi-cog', label: 'Setup', tooltip: 'Audio & RAM Settings' }
+    ];
 
-function selectBank(index: number) {
-    uiStore.selectedBank = index;
-    organStore.loadBank(index);
-}
-
-function addNewBank() {
-    if (organStore.addBank()) {
-        uiStore.selectedBank = organStore.banks.length - 1;
+    if (isDevToolsOpen.value) {
+        tabs.splice(3, 0, { id: 'debug', icon: 'mdi-bug', label: 'Debug', tooltip: 'System Inspector' });
     }
-}
 
-// Rendering functions moved to stores
-
-// selectDrive moved to store/managers
+    return tabs;
+});
 
 const midiColor = computed(() => {
     if (organStore.midiStatus === 'Connected') return 'green-5';
@@ -389,7 +395,6 @@ const midiColor = computed(() => {
 });
 
 onUnmounted(() => {
-    console.log('unmount')
     // Kill engine and workers
     organStore.stopOrgan();
 

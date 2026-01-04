@@ -1,10 +1,4 @@
-import { createRequire } from 'module';
-const require = createRequire(import.meta.url);
-const pkg = require('wavefile');
 import fs from 'fs';
-
-// Resilient constructor extraction for WaveFile in Electron/CJS environment
-const WaveFile = pkg.WaveFile || pkg;
 
 export interface WavLoop {
     start: number;

@@ -3,7 +3,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 contextBridge.exposeInMainWorld('myApi', {
     selectOdfFile: (path?: string) => ipcRenderer.invoke('select-odf-file', path),
     renderBank: (args: any) => ipcRenderer.invoke('render-bank', args),
-    renderPerformance: (recording: any, organData: any, renderTails: boolean) => ipcRenderer.invoke('render-performance', { recording, organData, renderTails }),
+    renderPerformance: (recording: any, organData: any, renderTails: boolean, banks?: any[]) => ipcRenderer.invoke('render-performance', { recording, organData, renderTails, banks }),
     cancelRendering: () => ipcRenderer.invoke('cancel-rendering'),
     readTextFile: (path: string) => ipcRenderer.invoke('read-text-file', path),
     readFileAsArrayBuffer: (path: string) => ipcRenderer.invoke('read-file-arraybuffer', path),
@@ -109,6 +109,11 @@ contextBridge.exposeInMainWorld('myApi', {
         ipcRenderer.on('remote-stopPlayback', listener);
         return () => ipcRenderer.removeListener('remote-stopPlayback', listener);
     },
+    onRemoteServerError: (callback: (message: string) => void) => {
+        const listener = (_event: any, message: string) => callback(message);
+        ipcRenderer.on('remote-server-error', listener);
+        return () => ipcRenderer.removeListener('remote-server-error', listener);
+    },
 
     // Updates
 
@@ -193,5 +198,18 @@ contextBridge.exposeInMainWorld('myApi', {
     platform: process.platform,
     minimize: () => ipcRenderer.send('window-minimize'),
     toggleMaximize: () => ipcRenderer.send('window-toggle-maximize'),
-    close: () => ipcRenderer.send('window-close')
+    close: () => ipcRenderer.send('window-close'),
+    onWindowStateChanged: (callback: (state: string) => void) => {
+        const listener = (_event: any, state: string) => callback(state);
+        ipcRenderer.on('window-state-changed', listener);
+        return () => ipcRenderer.removeListener('window-state-changed', listener);
+    },
+
+    // DevTools
+    onDevToolsChange: (callback: (isOpen: boolean) => void) => {
+        const listener = (_event: any, isOpen: boolean) => callback(isOpen);
+        ipcRenderer.on('devtools-change', listener);
+        return () => ipcRenderer.removeListener('devtools-change', listener);
+    },
+    isDevToolsOpened: () => ipcRenderer.invoke('is-devtools-opened')
 });

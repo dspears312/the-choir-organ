@@ -223,11 +223,27 @@ export const useExportStore = defineStore('export', {
             (window as any).myApi.onRenderProgress(progressListener);
 
             try {
+                const organStore = useOrganStore();
                 // Strip Proxies
                 const cleanRecording = JSON.parse(JSON.stringify(recording));
                 const cleanOrganData = JSON.parse(JSON.stringify(organData));
+                const cleanBanks = JSON.parse(JSON.stringify(organStore.banks));
 
-                await (window as any).myApi.renderPerformance(cleanRecording, cleanOrganData, useTails);
+                // Heuristic: If recording has no stop events (e.g. imported MIDI),
+                // inject the current organ state to avoid silence.
+                const hasStopEvents = cleanRecording.events.some((e: any) => e.type === 'stopOn');
+                if (!hasStopEvents) {
+                    const currentStops = [...organStore.currentCombination];
+                    currentStops.forEach(stopId => {
+                        cleanRecording.events.push({
+                            type: 'stopOn',
+                            stopId: stopId,
+                            timestamp: 0
+                        });
+                    });
+                }
+
+                await (window as any).myApi.renderPerformance(cleanRecording, cleanOrganData, useTails, cleanBanks);
                 this.renderStatus = 'Performance rendered successfully!';
             } catch (e: any) {
                 console.error('Performance render failed:', e);

@@ -2,7 +2,7 @@ import http from 'http';
 import os from 'os';
 import fs from 'fs';
 import path from 'path';
-import { ipcMain, BrowserWindow } from 'electron';
+import { ipcMain, BrowserWindow, dialog } from 'electron';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
 import type { WebSocketServer as WSSType, WebSocket as WSType } from 'ws';
@@ -21,7 +21,7 @@ export interface WebServerStatus {
 
 let server: http.Server | null = null;
 let wss: WSSType | null = null;
-let currentPort = 8080;
+let currentPort = 56789;
 let currentOrganData: any = null;
 let currentActivatedStops: string[] = [];
 let serverInstanceId = 0;
@@ -46,7 +46,7 @@ export function setMainWindow(win: BrowserWindow) {
     console.log('[WebRemote] Main window reference updated');
 }
 
-export function startWebServer(port: number = 8080) {
+export function startWebServer(port: number = 56789) {
     if (server) {
         console.log('[WebRemote] Server instance already exists, forcing stop first');
         stopWebServer();
@@ -222,6 +222,23 @@ export function startWebServer(port: number = 8080) {
 
     server.listen(port, '0.0.0.0', () => {
         console.log(`[WebRemote][Instance ${currentId}] Listening on http://0.0.0.0:${port}`);
+    });
+
+    server.on('error', (e: any) => {
+        if (e.code === 'EADDRINUSE') {
+            const msg = `Port ${port} is already in use.\n\nPlease ensure no other instance of The Choir Organ is running, or that another application is not using this port.`;
+            console.error(`[WebRemote] ${msg}`);
+
+            if (mainWindowInstance && !mainWindowInstance.isDestroyed()) {
+                dialog.showErrorBox('Remote Server Port Conflict', msg);
+                mainWindowInstance.webContents.send('remote-server-error', msg);
+            }
+
+            // Clean up the failed server instance
+            stopWebServer();
+        } else {
+            console.error('[WebRemote] Server Error:', e);
+        }
     });
 
     console.log(`[WebRemote][Instance ${currentId}] Server started successfully on port ${port}`);

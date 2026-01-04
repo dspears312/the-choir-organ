@@ -56,6 +56,7 @@ export interface IElectronAPI {
   onRemoteToggleRecording: (callback: (event: any, data: any) => void) => () => void;
   onRemotePlayRecording: (callback: (event: any, data: any) => void) => () => void;
   onRemoteStopPlayback: (callback: (event: any, data: any) => void) => () => void;
+  onRemoteServerError: (callback: (message: string) => void) => () => void;
 
   // Updates
   checkForUpdates: () => Promise<any>;
@@ -83,6 +84,9 @@ export interface IElectronAPI {
   minimize: () => void;
   toggleMaximize: () => void;
   close: () => void;
+  onWindowStateChanged?: (callback: (state: string) => void) => () => void;
+  onDevToolsChange?: (callback: (isOpen: boolean) => void) => () => void;
+  isDevToolsOpened?: () => Promise<boolean>;
 }
 
 declare global {

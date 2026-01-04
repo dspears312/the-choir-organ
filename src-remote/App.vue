@@ -1,82 +1,100 @@
 <template>
     <q-layout view="lHh LpR lFf" class="bg-black text-amber">
         <q-header bordered class="bg-header-gradient border-bottom-amber text-amber-9">
-            <q-toolbar>
-                <q-btn dense flat round icon="mdi-dock-window" @click="showCombos = !showCombos"
-                    :color="showCombos ? 'amber' : 'grey'" />
+            <!-- LEFT SIDE: Controls -->
+            <div class="row items-center no-wrap">
+                <q-btn flat icon="mdi-view-list" label="Banks" @click="toggleDrawer('combos')"
+                    :color="activeDrawer === 'combos' && leftDrawerOpen ? 'amber' : 'grey'">
+                    <q-tooltip>Combinations</q-tooltip>
+                </q-btn>
 
-                <q-toolbar-title class="font-cinzel text-center">
+                <q-btn flat icon="mdi-microphone" label="Recordings" @click="toggleDrawer('recordings')"
+                    :color="activeDrawer === 'recordings' && leftDrawerOpen ? 'amber' : 'grey'">
+                    <q-tooltip>Recordings</q-tooltip>
+                </q-btn>
+
+                <q-separator vertical spaced color="amber-10" />
+
+                <q-btn flat label="G.C." color="grey" icon="mdi-cancel" @click="organStore.clearCombination">
+                    <q-tooltip>General Cancel</q-tooltip>
+                </q-btn>
+
+                <q-btn flat :color="isRecording ? 'red' : 'grey'" :icon="isRecording ? 'mdi-stop' : 'mdi-record'"
+                    :label="isRecording ? 'Stop' : 'Record'" :class="{ 'animate-blink': isRecording }"
+                    @click="organStore.toggleRecording">
+                </q-btn>
+            </div>
+
+            <q-space />
+
+            <!-- CENTER: Title -->
+            <q-toolbar-title class="font-cinzel text-center absolute-center q-px-none" style="pointer-events: none;">
+                <div class="ellipsis text-h5 text-weight-bold">
                     {{ organData?.name || 'The Choir Organ' }}
-                </q-toolbar-title>
-
-                <div class="row items-center q-gutter-x-sm">
-                    <q-btn flat round dense :color="isRecording ? 'red' : 'grey'"
-                        :icon="isRecording ? 'mdi-stop' : 'mdi-record'" :class="{ 'animate-blink': isRecording }"
-                        @click="organStore.toggleRecording">
-                    </q-btn>
-
-                    <q-btn dense flat round icon="mdi-format-list-bulleted" @click="showRecording = !showRecording"
-                        :color="showRecording ? 'amber' : 'grey'" />
                 </div>
-            </q-toolbar>
+            </q-toolbar-title>
 
-            <!-- Unified Screen Tabs -->
-            <q-tabs v-model="currentScreenIndex" dense align="center" class="text-grey-5" active-color="amber"
-                indicator-color="amber" narrow-indicator>
-                <q-tab :name="-1" label="Basic" />
-                <q-tab v-for="(s, idx) in screens" :key="s.id" :name="idx" :label="s.name" />
-            </q-tabs>
+            <q-space />
+
+            <!-- RIGHT SIDE: Screens -->
+            <div class="row items-center no-wrap">
+                <q-tabs v-model="currentScreenIndex" dense align="right" class="text-grey-5" active-color="amber"
+                    indicator-color="amber" narrow-indicator shrink outside-arrows mobile-arrows>
+                    <q-tab :name="-1" label="Basic" />
+                    <q-tab v-for="(s, idx) in displayScreens" :key="s.id" :name="s.originalIndex" :label="s.name" />
+                </q-tabs>
+            </div>
         </q-header>
 
-        <!-- Combination Drawer (Left, Sticky/Push on desktop, Overlay on mobile) -->
-        <q-drawer v-model="showCombos" side="left" :overlay="false" behavior="mobile" bordered
-            class="bg-grey-10 border-right-amber" :width="280">
-            <CombinationManager :model-value="currentBankIndex" @update:model-value="setCurrentBank"
-                :allow-import-export="false" />
-        </q-drawer>
-
-        <!-- Recording Drawer (Right) -->
-        <q-drawer v-model="showRecording" side="right" overlay behavior="mobile" bordered
-            class="bg-grey-10 border-left-amber">
-            <RecordingManager :allow-export="false" @toggle-recording="organStore.toggleRecording" />
+        <!-- Unified Left Drawer -->
+        <q-drawer v-model="leftDrawerOpen" side="left" bordered class="bg-grey-10 border-right-amber" :width="320">
+            <template v-if="activeDrawer === 'combos'">
+                <CombinationManager :model-value="currentBankIndex" @update:model-value="setCurrentBank"
+                    :allow-import-export="false" />
+            </template>
+            <template v-else-if="activeDrawer === 'recordings'">
+                <RecordingManager :allow-export="false" @toggle-recording="organStore.toggleRecording" />
+            </template>
         </q-drawer>
 
         <q-page-container class="bg-black full-height">
-            <div v-if="loading" class="flex flex-center full-height">
-                <div class="column items-center">
-                    <q-spinner-grid color="amber" size="4em" />
-                    <div class="font-cinzel text-amber q-mt-md">Connecting...</div>
-                </div>
-            </div>
-
-            <div v-else class="full-height column">
-
-                <!-- Basic View -->
-                <div v-if="currentScreenIndex === -1" class="col scroll q-pa-md">
-                    <div v-for="manual in sortedManuals" :key="manual.id" class="manual-section q-mb-lg">
-                        <div
-                            class="manual-header font-cinzel text-h6 text-amber-8 q-mb-sm text-center border-bottom-amber-muted">
-                            {{ manual.name }}
-                            <q-badge color="grey-9" text-color="amber" :label="manual.stopIds.length" align="top" />
-                        </div>
-                        <div class="row justify-center q-gutter-md">
-                            <Drawknob v-for="stopId in manual.stopIds" :key="stopId"
-                                :name="organData.stops[stopId]?.name || stopId"
-                                :pitch="organData.stops[stopId]?.pitch || ''" :active="activatedStops.includes(stopId)"
-                                :volume="stopVolumes[stopId] ?? 100" :hide-volume="true"
-                                @toggle="organStore.toggleStop(stopId)" class="stop-item" />
-                        </div>
+            <q-page class="column">
+                <div v-if="loading" class="flex flex-center full-height">
+                    <div class="column items-center">
+                        <q-spinner-grid color="amber" size="4em" />
+                        <div class="font-cinzel text-amber q-mt-md">Connecting...</div>
                     </div>
                 </div>
 
-                <!-- Graphic View -->
-                <div v-else class="col relative-position overflow-hidden">
-                    <OrganScreen v-if="currentScreen" :screen="currentScreen" />
-                    <div v-else class="flex flex-center full-height text-grey-7 italic">
-                        No graphical screens available.
+                <template v-else>
+
+                    <!-- Basic View -->
+                    <div v-if="currentScreenIndex === -1" class="col scroll q-pa-md">
+                        <div v-for="manual in sortedManuals" :key="manual.id" class="manual-section q-mb-lg">
+                            <div
+                                class="manual-header font-cinzel text-h6 text-amber-8 q-mb-sm text-center border-bottom-amber-muted">
+                                {{ manual.name }}
+                                <q-badge color="grey-9" text-color="amber" :label="manual.stopIds.length" align="top" />
+                            </div>
+                            <div class="row justify-center q-gutter-md">
+                                <Drawknob v-for="stopId in manual.stopIds" :key="stopId"
+                                    :name="organData.stops[stopId]?.name || stopId"
+                                    :pitch="organData.stops[stopId]?.pitch || ''"
+                                    :active="activatedStops.includes(stopId)" :volume="stopVolumes[stopId] ?? 100"
+                                    :hide-volume="true" @toggle="organStore.toggleStop(stopId)" class="stop-item" />
+                            </div>
+                        </div>
                     </div>
-                </div>
-            </div>
+
+                    <!-- Graphic View -->
+                    <template v-else>
+                        <OrganScreen v-if="currentScreen" :screen="currentScreen" style="flex: 1 1 auto;" />
+                        <div v-else class="flex flex-center full-height text-grey-7 italic">
+                            No graphical screens available.
+                        </div>
+                    </template>
+                </template>
+            </q-page>
         </q-page-container>
     </q-layout>
 </template>
@@ -100,8 +118,22 @@ const banks = ref<Bank[]>([]);
 const recordings = ref<any[]>([]);
 const isRecording = ref(false);
 
-const showCombos = ref(false); // Default closed
-const showRecording = ref(false);
+const leftDrawerOpen = ref(false);
+const activeDrawer = ref<'combos' | 'recordings'>('combos');
+
+function toggleDrawer(target: 'combos' | 'recordings') {
+    if (leftDrawerOpen.value && activeDrawer.value === target) {
+        // If already open and same target, close it
+        leftDrawerOpen.value = false;
+    } else {
+        // Switch content and ensure open
+        activeDrawer.value = target;
+        leftDrawerOpen.value = true;
+    }
+}
+
+// const showCombos = ref(false); // Default closed
+// const showRecording = ref(false);
 // const viewMode = ref<'graphic' | 'basic'>('graphic'); // Removed
 // const manuallySwitched = ref(false); // Removed
 
@@ -120,6 +152,23 @@ function toggleFullscreen() {
 }
 document.addEventListener('fullscreenchange', () => {
     isFullscreen.value = !!document.fullscreenElement;
+});
+
+// Filtering logic (same as OrganBuilderPage)
+const displayScreens = computed(() => {
+    return screens.value.map((screen, index) => ({ ...screen, originalIndex: index }))
+        .filter((screen: any) => {
+            let title = screen.name.toLowerCase();
+            if (title.includes('noise')) return false;
+            if (title.includes('wind')) return false;
+            if (title.includes('blow')) return false; // blower
+            if (title.includes('cresc')) return false; // crescendo
+            if (title.includes('detun')) return false; // detune or detuning
+            if (title.includes('voic')) return false; // voice or voicing
+            if (title.includes('mix')) return false; // mix or mixing
+            if (title.includes('info')) return false; // info or information
+            return true;
+        });
 });
 
 

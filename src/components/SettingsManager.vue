@@ -44,6 +44,58 @@
                 <q-btn outline color="amber-7" label="Open Full Audio Settings" icon="mdi-tune"
                     class="full-width q-mt-sm" @click="$emit('open-advanced')" />
             </div>
+
+            <q-separator dark />
+
+            <!-- Remote Server Section (Moved from RemoteServerManager) -->
+            <div class="column q-gutter-y-sm">
+                <div class="text-subtitle2 text-grey-4">Remote Control</div>
+                <div class="text-caption text-grey-6">Access organ controls via web browser</div>
+
+                <q-card dark bordered class="bg-black-50 border-amber-muted">
+                    <q-card-section>
+                        <div class="row items-center justify-between">
+                            <div class="column">
+                                <div class="text-subtitle2"
+                                    :class="organStore.remoteServerStatus.running ? 'text-green' : 'text-grey-6'">
+                                    {{ organStore.remoteServerStatus.running ? 'Server Active' : 'Server Offline' }}
+                                </div>
+                                <!-- Port Input -->
+                                <div class="row items-center q-mt-sm">
+                                    <q-input dense dark v-model.number="settingsStore.remoteServerPort" type="number"
+                                        label="Port" class="q-mr-sm" :disable="organStore.remoteServerStatus.running"
+                                        @update:model-value="updatePort" input-class="text-amber font-mono"
+                                        label-color="grey-6" />
+                                </div>
+                            </div>
+                            <q-btn :color="organStore.remoteServerStatus.running ? 'red-9' : 'green-9'"
+                                :label="organStore.remoteServerStatus.running ? 'Stop Server' : 'Start Server'"
+                                unelevated size="sm" class="q-px-md" @click="organStore.toggleRemoteServer" />
+                        </div>
+                    </q-card-section>
+                </q-card>
+
+                <div v-if="organStore.remoteServerStatus.running" class="column q-gutter-y-sm">
+                    <div class="text-overline text-amber-9">Available Addresses</div>
+                    <q-list dark bordered separator class="rounded-borders bg-grey-10">
+                        <q-item v-for="ip in organStore.remoteServerStatus.ips" :key="ip" class="q-py-xs">
+                            <q-item-section>
+                                <q-item-label class="text-caption font-mono text-grey-4">http://{{ ip }}:{{
+                                    organStore.remoteServerStatus.port }}</q-item-label>
+                            </q-item-section>
+                            <q-item-section side>
+                                <q-btn flat round dense icon="mdi-content-copy" size="xs" color="grey-7"
+                                    @click="copyToClipboard(`http://${ip}:${organStore.remoteServerStatus.port}`)">
+                                    <q-tooltip>Copy URL</q-tooltip>
+                                </q-btn>
+                            </q-item-section>
+                        </q-item>
+                    </q-list>
+                    <div class="text-caption text-grey-6 q-mt-sm">
+                        Connect your phone or tablet to the same Wi-Fi network and visit one of the URLs above.
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 </template>
@@ -62,6 +114,23 @@ const saveGlobalSettings = async () => {
     await settingsStore.saveSettings({ workerCount: settingsStore.workerCount });
 };
 
+const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text);
+};
+
+const updatePort = (val: number | string | null) => {
+    if (!val) return;
+    const port = Number(val);
+    if (!isNaN(port) && port > 0 && port < 65536) {
+        if (organStore.remoteServerStatus.running) {
+            organStore.toggleRemoteServer(); // Stop it
+        }
+
+        settingsStore.saveSettings({ remoteServerPort: port });
+        organStore.remoteServerStatus.port = port;
+    }
+};
+
 onMounted(() => {
     settingsStore.loadSettings();
 });
@@ -74,5 +143,13 @@ onMounted(() => {
 
 .border-bottom-amber {
     border-bottom: 1px solid rgba(212, 175, 55, 0.3);
+}
+
+.bg-black-50 {
+    background: rgba(0, 0, 0, 0.5);
+}
+
+.border-amber-muted {
+    border: 1px solid rgba(212, 175, 55, 0.1);
 }
 </style>

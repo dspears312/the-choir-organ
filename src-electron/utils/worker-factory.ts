@@ -101,7 +101,11 @@ export class WorkerFactory {
         const tsUtilsPath = path.resolve(process.cwd(), 'src-electron', 'utils', `${workerName}.ts`);
         if (fs.existsSync(tsUtilsPath)) return tsUtilsPath;
 
-        // 2. Check for JS build (Prod - alongside main)
+        // 2. Check for JS in Resources (Prod - extraResources)
+        const resourcesPath = path.resolve(process.resourcesPath, 'workers', `${workerName}.js`);
+        if (fs.existsSync(resourcesPath)) return resourcesPath;
+
+        // 3. Check for JS build (Prod - alongside main)
         const prodPath = path.resolve(__dirname, 'workers', `${workerName}.js`);
         if (fs.existsSync(prodPath)) return prodPath;
 

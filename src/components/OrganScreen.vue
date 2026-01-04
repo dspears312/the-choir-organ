@@ -105,8 +105,11 @@ watch(() => [props.screen.width, props.screen.height], () => {
 const scalerStyle = computed(() => ({
     width: `${props.screen.width}px`,
     height: `${props.screen.height}px`,
-    transform: `scale(${scale.value})`,
-    // transformOrigin: 'top center', // or center center? Top center is usually safer for vertical flows.
+    transform: `translate(-50%, -50%) scale(${scale.value})`,
+    transformOrigin: 'center center',
+    position: 'absolute' as const,
+    top: '50%',
+    left: '50%',
 }));
 
 const screenStyle = computed(() => ({
@@ -207,16 +210,14 @@ function stopDrag() {
     width: 100%;
     height: 100%;
     position: relative;
-    display: flex;
-    justify-content: center;
-    align-items: center; // Center vertically and horizontally
     overflow: hidden;
-    // background-color: #1a1a1a; // Dark background for letterboxing
+    background-color: #111;
 }
 
 .organ-screen-scaler {
-    // Transformer wrapper
-    flex-shrink: 0; // Prevent flex squishing
+    // Positioned via style binding
+    touch-action: none;
+    will-change: transform;
 }
 
 .organ-screen {

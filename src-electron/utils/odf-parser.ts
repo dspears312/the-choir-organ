@@ -1,6 +1,4 @@
-import { createRequire } from 'module';
-const require = createRequire(import.meta.url);
-const ini = require('ini');
+import ini from 'ini';
 import fs from 'fs';
 import path from 'path';
 

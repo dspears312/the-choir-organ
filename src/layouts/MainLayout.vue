@@ -12,7 +12,7 @@
       </q-bar>
 
       <div class="row no-wrap items-center q-pl-lg q-py-sm q-electron-drag"
-        :class="{ 'mac-header-padding': platform === 'darwin' }">
+        :class="{ 'mac-header-padding': platform === 'darwin' && !isFullscreen }">
         <div class="row items-center cursor-pointer" @click="$router.push('/')">
           <q-icon name="mdi-piano" size="24px" class="text-amber-8 q-mr-sm" />
           <div class="text-h6 font-cinzel text-amber-8 tracking-widest no-wrap">
@@ -65,7 +65,6 @@
         :render-progress="exportStore.renderProgress" :is-rendering-export="exportStore.isRendering"
         :render-status="exportStore.renderStatus" />
       <TsunamiExportManager v-else-if="uiStore.activeDrawer === 'export'" />
-      <RemoteServerManager v-else-if="uiStore.activeDrawer === 'remote'" />
       <SettingsManager v-else-if="uiStore.activeDrawer === 'settings'" @open-advanced="showAudioSettings = true" />
       <DebugDrawerContent v-else-if="uiStore.activeDrawer === 'debug'" />
     </q-drawer>
@@ -85,7 +84,6 @@
 import { ref, watch, onMounted } from 'vue';
 import HelpDialog from 'src/components/HelpDialog.vue';
 import WalkthroughDrawer from 'src/components/WalkthroughDrawer.vue';
-import DebugDrawer from 'src/components/DebugDrawer.vue';
 import WalkthroughPointer from 'src/components/WalkthroughPointer.vue';
 import { useWalkthroughStore } from 'src/stores/walkthrough';
 import { useOrganStore } from 'src/stores/organ';
@@ -97,7 +95,6 @@ import { useRoute } from 'vue-router';
 // Managers
 import CombinationManager from 'src/components/CombinationManager.vue';
 import RecordingManager from 'src/components/RecordingManager.vue';
-import RemoteServerManager from 'src/components/RemoteServerManager.vue';
 import TsunamiExportManager from 'src/components/TsunamiExportManager.vue';
 import SettingsManager from 'src/components/SettingsManager.vue';
 import DebugDrawerContent from 'src/components/DebugDrawerContent.vue';
@@ -123,12 +120,19 @@ const minimize = () => (window as any).myApi?.minimize();
 const toggleMaximize = () => (window as any).myApi?.toggleMaximize();
 const close = () => (window as any).myApi?.close();
 const drawerWidth = ref(300);
+const isFullscreen = ref(false);
 
 onMounted(async () => {
   if ((window as any).myApi?.getAppVersion) {
     appVersion.value = await (window as any).myApi.getAppVersion();
   }
   drawerWidth.value = 350;
+
+  if ((window as any).myApi?.onWindowStateChanged) {
+    (window as any).myApi.onWindowStateChanged((state: string) => {
+      isFullscreen.value = state === 'fullscreen';
+    });
+  }
 });
 
 function toggleRecording() {

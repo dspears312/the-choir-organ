@@ -201,6 +201,16 @@ export default defineConfig((/* ctx */) => {
         // https://www.electron.build/configuration/configuration
 
         appId: 'com.tecumtech.the-choir-organ',
+        extraResources: [
+          {
+            from: 'src-electron/workers-dist',
+            to: 'workers'
+          },
+          {
+            from: 'src-electron/remote/dist',
+            to: 'remote/dist'
+          }
+        ],
         publish: {
           provider: 'github'
         },
