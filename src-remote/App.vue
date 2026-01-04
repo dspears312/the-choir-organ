@@ -271,11 +271,16 @@ function connect() {
     ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
         if (data.type === 'tco-init' || data.type === 'tco-update') {
+            const organChanged = data.organData && data.organData.name !== organData.value?.name;
+
             if (data.organData) organData.value = data.organData;
             if (data.screens) screens.value = data.screens;
 
             if (data.activeScreenIndex !== undefined) {
-                currentScreenIndex.value = data.activeScreenIndex;
+                // Only sync screen index if it's the initial load or the organ has changed
+                if (data.type === 'tco-init' || organChanged) {
+                    currentScreenIndex.value = data.activeScreenIndex;
+                }
             }
 
             if (data.activatedStops) activatedStops.value = data.activatedStops;
