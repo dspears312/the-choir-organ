@@ -55,9 +55,10 @@
 
                 <!-- Left Area: Tabs for Basic or Organ Screens -->
                 <div class="col column no-wrap">
-                    <div class="row items-center bg-grey-10 text-amber">
-                        <span class="font-cinzel text-grey-6 text-shadow q-mx-md">{{
-                            organStore.organData?.name }}
+                    <div class="row items-center justify-around bg-grey-10 text-amber">
+                        <span class="font-cinzel text-grey-6 text-shadow q-mx-md"
+                            style="height: 36px; line-height: 36px; font-size: 18px">{{
+                                organStore.organData?.name }}
                         </span>
 
                         <q-tabs v-model="activeTab" dense active-color="amber" align="center" indicator-color="amber"
@@ -138,7 +139,7 @@
                             class="q-pa-sm overflow-hidden" style="display: flex;">
                             <!-- <q-scroll-area style="height: 100%; width: 100%;"> -->
                             <!-- <div class="flex flex-center q-pa-md" style="min-height: 100%"> -->
-                            <OrganScreen :screen="screen" />
+                            <OrganScreen :screen="screen" auto-switch-layout />
                             <!-- </div> -->
                             <!-- </q-scroll-area> -->
                         </q-tab-panel>

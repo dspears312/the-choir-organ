@@ -2,6 +2,7 @@ import { XMLParser } from 'fast-xml-parser';
 import fs from 'fs';
 import path from 'path';
 import { OrganData, OrganStop, OrganManual, OrganRank, OrganPipe, OrganTremulant, NOISE_KEYWORDS, OrganScreenData, OrganScreenElement } from './odf-parser';
+import { getImageDimensions } from './image-reader';
 
 const GLOBAL_ATTENUATION = 14;
 
@@ -12,6 +13,7 @@ const GLOBAL_ATTENUATION = 14;
  */
 export function parseHauptwerk(filePath: string): OrganData {
     console.log(`[HauptwerkParser] Starting parse for: ${filePath}`);
+    console.log(`[HauptwerkParser] TIMESTAMP: ${new Date().toISOString()}`);
     const xmlData = fs.readFileSync(filePath, 'utf-8');
     const parser = new XMLParser({
         ignoreAttributes: false,
@@ -296,48 +298,190 @@ export function parseHauptwerk(filePath: string): OrganData {
             name: page.b || `Page ${pageID}`,
             width: parseInt(general?.Display_ConsoleScreenWidthPixels || general?.Display_ConsoleScreenWidthPixels_A || '1024'), // Check both
             height: parseInt(general?.Display_ConsoleScreenHeightPixels || general?.Display_ConsoleScreenHeightPixels_A || '768'),
+            alternateLayouts: [],
             elements: []
         };
 
+        // Parse Alternate Layout Dimensions (Global)
+        const layout1W = parseInt(general?.Display_AlternateConsoleScreenLayout1_WidthPixels || '0');
+        const layout1H = parseInt(general?.Display_AlternateConsoleScreenLayout1_HeightPixels || '0');
+        const layout2W = parseInt(general?.Display_AlternateConsoleScreenLayout2_WidthPixels || '0');
+        const layout2H = parseInt(general?.Display_AlternateConsoleScreenLayout2_HeightPixels || '0');
+
+        // Initialize layout availability based on explicit ODF flags (c=Wide, d=Tall)
+        let enableLayout1 = page.c === 'Y';
+        let enableLayout2 = page.d === 'Y';
         imageSetInstances.forEach((isi: any) => {
             if (isi.e?.toString() === pageID) {
+                // DEBUG
                 const imageSetID = isi.c?.toString();
                 const imageSet = imageSetMap.get(imageSetID);
-                if (imageSet) {
-                    // f: Layer/Z-index (Hauptwerk standard)
-                    let zIndex = parseInt(isi.f || '1');
-                    let x = parseInt(isi.g || '0');
-                    let y = parseInt(isi.h || '0');
-                    let w = parseInt(isi.i || imageSet.g || '0');
-                    let h = parseInt(isi.j || imageSet.i || '0');
+                if (imageSet) { // Check imageSet before using it for debug name
+                    if (isi.a?.toString() === '1031' || isi.a?.toString() === '1035') {
+                        const n = (isi.b || imageSet.b || `Image ${isi.a}`).toString();
+                        const nl = n.toLowerCase();
+                        const bg = nl.includes('background') || nl.includes('console') || nl.includes('jamb') || nl.includes('image optional');
+                        console.log(`[Parser] Processing Element ${isi.a}. Name: '${n}'. k: ${isi.k}, q: ${isi.q}. isBG: ${bg}`);
+                    }
 
-                    // If X/Y are 0 but f,g are set, maybe f,g is X,Y?
-                    // (Some older HW formats or specific implementations)
-                    if (x === 0 && y === 0 && (isi.f || '0') !== '0' && (isi.g || '0') !== '0' && zIndex > 100) {
-                        x = parseInt(isi.f || '0');
-                        y = parseInt(isi.g || '0');
-                        zIndex = 1; // Reset zIndex if we use f as X
+                    // f: Layer/Z-index (Hauptwerk standard)
+                    let zIndex = Math.round(parseFloat(isi.f || '1'));
+                    let x = Math.round(parseFloat(isi.g || '0'));
+                    let y = Math.round(parseFloat(isi.h || '0'));
+                    let w = Math.round(parseFloat(isi.i || imageSet.g || '0'));
+                    let h = Math.round(parseFloat(isi.j || imageSet.i || '0'));
+
+                    // Alternate Layout Coordinates
+                    // Layout 1: l (x), m (y), q (Alt ImageSet ID)
+                    // Layout 2: r (x), s (y)
+                    const layouts: { [index: number]: { x: number, y: number, imageOff?: string, imageOn?: string } } = {};
+
+                    if (isi.l && isi.m) {
+                        layouts[1] = {
+                            x: Math.round(parseFloat(isi.l)),
+                            y: Math.round(parseFloat(isi.m))
+                        };
+                    }
+
+                    if (isi.r && isi.s) {
+                        layouts[2] = {
+                            x: Math.round(parseFloat(isi.r)),
+                            y: Math.round(parseFloat(isi.s))
+                        };
+                    }
+
+                    // Helpers
+                    const elementName = (isi.b || imageSet.b || `Image ${isi.a}`).toString();
+                    const nameLower = elementName.toLowerCase();
+                    const isBG = nameLower.includes('background') ||
+                        nameLower.includes('console') ||
+                        nameLower.includes('jamb') ||
+                        nameLower.includes('pozadi') ||
+                        nameLower.includes('stul') ||
+                        nameLower.includes('image optional') ||
+                        nameLower.includes('optional image') ||
+                        (w > 800 && h > 600); // Rough heuristic
+
+
+
+                    // Resolving Alternate ImageSet (q tag or fallback to k)
+                    let altLink = isi.q ? isi.q.toString() : undefined;
+
+                    // Fallback: If no q, check k (ImageOn) BUT only for "Background-like" elements
+                    // This handles cases like Element 1035 (Stops) which links to stopsW via k
+                    if (!altLink && isi.k && !isi.q && isBG) {
+                        altLink = isi.k.toString();
+                        // console.log(`[Parser] checking k-link as fallback for ${isi.a}: ${altLink}`);
+                    }
+
+                    if (altLink) {
+                        const altImageSetID = altLink;
+                        const altImageSet = imageSetMap.get(altImageSetID);
+                        if (altImageSet) {
+
+                            const imgOffPath = altImageSet.imageOff ? resolveImagePath(altImageSet.imageOff.toString()) : undefined;
+                            const imgOnPath = altImageSet.imageOn ? resolveImagePath(altImageSet.imageOn.toString()) : undefined;
+
+                            // Detect Aspect Ratio to decide target layout
+                            // Layout 1 = Widest (Landscape)
+                            // Layout 2 = Tallest (Portrait)
+                            let targetLayout = -1; // Default to None
+
+                            if (imgOffPath || imgOnPath) {
+                                try {
+                                    const dims = getImageDimensions(imgOffPath || imgOnPath || '');
+                                    if (dims) {
+                                        if (dims.height > dims.width) {
+                                            targetLayout = 2; // Portrait Image -> Apply to Portrait Layout
+                                        } else if (dims.width > dims.height) {
+                                            targetLayout = 1; // Landscape Image -> Apply to Wide Layout
+                                        }
+
+                                        if (targetLayout !== -1) {
+                                            console.log(`[Parser] Element ${isi.a} (Link ${altLink}) - Image: ${path.basename(imgOffPath || imgOnPath || '')} - Dims: ${dims.width}x${dims.height} - Assigned to Layout ${targetLayout}`);
+                                        }
+                                    } else {
+                                        // console.log(`[Parser] Element ${isi.a} (Link ${altLink}) - Could not get dims`);
+                                    }
+                                } catch (e) {
+                                    // console.log(`[Parser] Element ${isi.a} (Link ${altLink}) - Error reading dims: ${e}`);
+                                }
+                            }
+
+                            const applyToLayout = (idx: number) => {
+                                if (idx === -1) return;
+
+                                if (!layouts[idx]) layouts[idx] = { x: x, y: y }; // Fallback to Default Coords (x,y) if not defined
+
+                                if (imgOffPath) layouts[idx].imageOff = imgOffPath;
+                                if (imgOnPath) layouts[idx].imageOn = imgOnPath;
+
+                                // Fallbacks
+                                if (!layouts[idx].imageOff && altImageSet.j) {
+                                    const p = resolveImagePath(altImageSet.j.toString());
+                                    if (p) layouts[idx].imageOff = p;
+                                }
+                                if (!layouts[idx].imageOn && altImageSet.k) {
+                                    const p = resolveImagePath(altImageSet.k.toString());
+                                    if (p) layouts[idx].imageOn = p;
+                                }
+                                if (!layouts[idx].imageOff && altImageSet.d) {
+                                    const p = resolveImagePath(altImageSet.d.toString());
+                                    if (p) layouts[idx].imageOff = p;
+                                }
+                            };
+
+                            // Apply to the DETECTED layout
+                            applyToLayout(targetLayout);
+                        }
                     }
 
                     const element: OrganScreenElement = {
                         id: isi.a.toString(),
                         type: 'Image',
-                        name: (isi.b || imageSet.b || `Image ${isi.a}`).toString(),
+                        name: elementName,
                         x,
                         y,
                         width: w,
                         height: h,
-                        zIndex
+                        // zIndex logic handles isBG later, or can reuse here? 
+                        // The original code calculated zIndex separately but we can verify.
+                        // Actually, I should remove the duplicate calculation below if I moved it here?
+                        // No I will just use `zIndex` variable which was calculated above.
+                        zIndex: Math.round(parseFloat(isi.f || '1')),
+                        layouts: Object.keys(layouts).length > 0 ? layouts : undefined
                     };
 
+
                     // Resolve paths
-                    if (imageSet.imageOff) element.imageOff = resolveImagePath(imageSet.imageOff.toString());
-                    if (imageSet.imageOn) element.imageOn = resolveImagePath(imageSet.imageOn.toString());
+                    if (imageSet.imageOff) {
+                        const p = resolveImagePath(imageSet.imageOff.toString());
+                        if (p) element.imageOff = p;
+                    }
+                    if (imageSet.imageOn) {
+                        const p = resolveImagePath(imageSet.imageOn.toString());
+                        if (p) element.imageOn = p;
+                    }
 
                     // Fallbacks for masks if actual images are missing
-                    if (!element.imageOff && imageSet.j) element.imageOff = resolveImagePath(imageSet.j.toString());
-                    if (!element.imageOn && imageSet.k) element.imageOn = resolveImagePath(imageSet.k.toString());
-                    if (!element.imageOff && imageSet.d) element.imageOff = resolveImagePath(imageSet.d.toString());
+                    if (!element.imageOff && imageSet.j) {
+                        const p = resolveImagePath(imageSet.j.toString());
+                        if (p) element.imageOff = p;
+                    }
+                    if (!element.imageOn && imageSet.k) {
+                        const p = resolveImagePath(imageSet.k.toString());
+                        if (p) element.imageOn = p;
+                    }
+                    if (!element.imageOff && imageSet.d) {
+                        const p = resolveImagePath(imageSet.d.toString());
+                        if (p) element.imageOff = p;
+                    }
+
+                    // Detect Background & Z-Index
+                    // Detect Background & Z-Index
+                    if (isBG) {
+                        element.isBackground = true;
+                    }
 
                     // Switch detection
                     const isiID = isi.a.toString();
@@ -355,19 +499,15 @@ export function parseHauptwerk(filePath: string): OrganData {
                     }
 
                     // Decide on a default zIndex. 
-                    // Hauptwerk standard is 1, but we use 7 as a default for "foreground"
-                    // to ensure knobs (often missing 'f') stay above backgrounds (often 'f=1' or 'f=5').
-                    const nameLower = (isi.b || imageSet.b || "").toLowerCase();
-                    const isFullscreen = (a: any) => a.x === 0 && a.y === 0 && (a.width >= screen.width * 0.95 || a.width === 0);
-                    const isBG = nameLower.includes('background') || nameLower.includes('pozadi') || nameLower.includes('stul') || isFullscreen(element);
-
                     let newZIndex = parseInt(isi.f || (isBG ? '1' : '7'));
                     element.zIndex = newZIndex;
 
                     if (isBG && !screen.backgroundImage) {
-                        screen.backgroundImage = element.imageOff || element.imageOn;
-                        if (!screen.backgroundImage && imageSet.d) {
-                            screen.backgroundImage = resolveImagePath(imageSet.d.toString());
+                        if (element.imageOff || element.imageOn) {
+                            screen.backgroundImage = element.imageOff || element.imageOn;
+                        } else if (imageSet.d) {
+                            const p = resolveImagePath(imageSet.d.toString());
+                            if (p) screen.backgroundImage = p;
                         }
                     }
 
@@ -395,6 +535,14 @@ export function parseHauptwerk(filePath: string): OrganData {
 
             return 0; // Maintain original XML order for same layer/type
         });
+
+        // Assign enabled layouts to the screen
+        if (enableLayout1 && layout1W > 0 && layout1H > 0) {
+            screen.alternateLayouts![1] = { width: layout1W, height: layout1H };
+        }
+        if (enableLayout2 && layout2W > 0 && layout2H > 0) {
+            screen.alternateLayouts![2] = { width: layout2W, height: layout2H };
+        }
 
         organData.screens.push(screen);
     });

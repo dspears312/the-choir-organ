@@ -6,8 +6,6 @@ import os from 'os';
 import { fileURLToPath, pathToFileURL } from 'url'
 import { setImmediate } from 'timers';
 import { exec } from 'child_process';
-import { OrganData, parseODF } from './utils/odf-parser';
-import { parseHauptwerk } from './utils/hauptwerk-parser';
 import { renderNote, renderPerformance } from './utils/renderer';
 import { readWav } from './utils/wav-reader';
 import { addToRecent, getRecents, loadOrganState, loadSettings, removeFromRecent, saveOrganState, saveSettings, loadOrganCache, saveOrganCache } from './utils/persistence';
@@ -880,7 +878,6 @@ ipcMain.handle('create-workers', async (event, count: number) => {
     if (workerWindows.length > 0) {
       console.log(`[Main] Unloading workers...`);
       workerWindows.forEach(w => {
-        console.log(w)
         try { w.destroy(); } catch (e) { console.error(e) }
       });
       workerWindows = [];

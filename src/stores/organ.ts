@@ -1247,6 +1247,13 @@ export const useOrganStore = defineStore('organ', {
                 return { success: true };
             }
             return { success: false, error: result.error };
+        },
+
+        setScreen(index: number) {
+            if (this.organData && this.organData.screens[index]) {
+                this.organData.activeScreenIndex = index;
+                this.syncRemoteState();
+            }
         }
     }
 });

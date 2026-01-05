@@ -36,6 +36,8 @@ export class WorkerFactory {
 
             const workerOptions: WorkerOptions = {
                 workerData: options.workerData,
+                stdout: true,
+                stderr: true,
                 env: {
                     TS_NODE_TRANSPILE_ONLY: 'true',
                     ...process.env
@@ -53,6 +55,10 @@ export class WorkerFactory {
 
             console.log(`[WorkerFactory] Spawning worker: ${workerPath}`);
             const worker = new Worker(workerPath, workerOptions);
+
+            // Forward stdout/stderr
+            worker.stdout?.on('data', (data) => console.log(`[Worker:${workerName}] ${data.toString().trim()}`));
+            worker.stderr?.on('data', (data) => console.error(`[Worker:${workerName}] ${data.toString().trim()}`));
 
             worker.on('message', (msg: WorkerMessage) => {
                 if (options.onMessage) options.onMessage(msg);

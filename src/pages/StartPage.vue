@@ -133,7 +133,7 @@
                     <div class="text-overline text-grey-6 q-mb-sm text-center">Recent Organs</div>
                     <q-list dark separator bordered class="rounded-borders bg-grey-10 shadow-2">
                         <q-item v-for="file in organStore.recentFiles" :key="file" clickable v-ripple
-                            @click="$router.push({ path: '/builder', query: { file } })">
+                            @click="loadOrgan($event, file)">
                             <q-item-section avatar>
                                 <q-icon name="mdi-history" color="amber-7" />
                             </q-item-section>
@@ -212,6 +212,13 @@ async function openManagementDialog(file: string) {
     } finally {
         isCalculating.value = false;
     }
+}
+
+async function loadOrgan($event: Event, file: string) {
+    if ($event.shiftKey) {
+        await window.myApi.deleteOrganCache(file);
+    }
+    router.push({ path: '/builder', query: { file } })
 }
 
 async function handleClearCache() {

@@ -51,16 +51,21 @@ export interface OrganTremulant {
 
 export interface OrganScreenElement {
   id: string;
-  type: 'Switch' | 'Label' | 'Image';
+  type: 'Switch' | 'Image' | 'Label';
   name: string;
   x: number;
   y: number;
-  width: number;
-  height: number;
-  imageOn?: string | undefined;
-  imageOff?: string | undefined;
-  linkId?: string | undefined; // ID of the global Switch or Stop it controls
+  width?: number;
+  height?: number;
   zIndex?: number;
+  imageOff?: string;
+  imageOn?: string;
+  linkId?: string; // For switches, the stop code they toggle
+  isBackground?: boolean;
+  mouseRect?: { x: number, y: number, w: number, h: number } | undefined;
+
+  // Alternate Layouts (Index 1, 2, etc.)
+  layouts?: { [index: number]: { x: number, y: number, imageOff?: string, imageOn?: string } } | undefined;
 }
 
 export interface OrganScreenData {
@@ -71,6 +76,9 @@ export interface OrganScreenData {
   backgroundImage?: string | undefined;
   elements: OrganScreenElement[];
   zIndex?: number;
+
+  // Alternate Layout Dimensions (Index 1, 2)
+  alternateLayouts?: { width: number, height: number }[];
 }
 
 export interface OrganData {
@@ -83,6 +91,9 @@ export interface OrganData {
   screens: OrganScreenData[];
   basePath: string;
   sourcePath: string;
+
+  // Alternate Layout Dimensions (Global)
+  alternateLayouts?: { width: number, height: number }[];
 }
 
 export const NOISE_KEYWORDS = ['noise', 'tracker', 'blower', 'motor', 'action', 'vental', 'tremulant noise', 'drawknob', 'stop action', 'special'];
@@ -159,6 +170,7 @@ export function parseODF(filePath: string): OrganData {
     ranks: {},
     tremulants: {},
     screens: [],
+    alternateLayouts: [],
     basePath,
 
     sourcePath: filePath
@@ -205,7 +217,8 @@ export function parseODF(filePath: string): OrganData {
       name: 'Main Console',
       width: parseInt(parsed.Organ.DispScreenSizeHoriz),
       height: parseInt(parsed.Organ.DispScreenSizeVert),
-      elements: []
+      elements: [],
+      alternateLayouts: []
     };
 
     // Global Images (belong to Main Screen)
@@ -216,20 +229,20 @@ export function parseODF(filePath: string): OrganData {
       const imgData = parsed[imgKey];
       if (imgData && imgData.Image) {
         const imgPath = path.resolve(basePath, imgData.Image.replace(/\\/g, '/'));
-        if (i === 1) {
-          mainScreen.backgroundImage = imgPath;
-        } else {
-          mainScreen.elements.push({
-            id: `Main_img_${i}`,
-            type: 'Image',
-            name: `Image ${i}`,
-            x: parseInt(imgData.PositionX || '0'),
-            y: parseInt(imgData.PositionY || '0'),
-            width: 0,
-            height: 0,
-            imageOff: imgPath
-          });
-        }
+        const element: OrganScreenElement = {
+          id: `Main_img_${i}`,
+          type: 'Image',
+          name: `Image ${i}`,
+          x: parseInt(imgData.PositionX || '0'),
+          y: parseInt(imgData.PositionY || '0'),
+          width: 0,
+          height: 0,
+          imageOff: imgPath,
+          isBackground: i === 1,
+          layouts: {}
+        };
+        if (i === 1) mainScreen.backgroundImage = imgPath;
+        mainScreen.elements.push(element);
       }
     }
 
@@ -238,7 +251,10 @@ export function parseODF(filePath: string): OrganData {
       const sw = allSwitches[swId];
       // Only add if it has coordinates and is displayed (default Y? Check spec. usually Displayed=N hides it)
       if (sw.PositionX !== undefined && sw.PositionY !== undefined && sw.Displayed !== 'N') {
-        mainScreen.elements.push({
+        const imgOnStr = sw.ImageOn;
+        const imgOffStr = sw.ImageOff;
+
+        const element: OrganScreenElement = {
           id: `Main_sw_${swId}`,
           type: 'Switch',
           name: sw.Name || `Switch ${swId}`,
@@ -246,10 +262,13 @@ export function parseODF(filePath: string): OrganData {
           y: parseInt(sw.PositionY),
           width: parseInt(sw.MouseRectWidth || '50'),
           height: parseInt(sw.MouseRectHeight || '50'), // Default or specific
-          imageOn: sw.ImageOn ? path.resolve(basePath, sw.ImageOn.replace(/\\/g, '/')) : undefined,
-          imageOff: sw.ImageOff ? path.resolve(basePath, sw.ImageOff.replace(/\\/g, '/')) : undefined,
-          linkId: switchIdToStopId[swId] || swId // Use StopID if available, else SwitchID
-        });
+          linkId: switchIdToStopId[swId] || swId, // Use StopID if available, else SwitchID
+          layouts: {}
+        };
+        if (imgOnStr) element.imageOn = path.resolve(basePath, imgOnStr.replace(/\\/g, '/'));
+        if (imgOffStr) element.imageOff = path.resolve(basePath, imgOffStr.replace(/\\/g, '/'));
+
+        mainScreen.elements.push(element);
       }
     });
 
@@ -275,7 +294,8 @@ export function parseODF(filePath: string): OrganData {
       name: panel.Name || `Panel ${panelId}`,
       width: parseInt(panel.DispScreenSizeHoriz || '1024'),
       height: parseInt(panel.DispScreenSizeVert || '768'),
-      elements: []
+      elements: [],
+      alternateLayouts: []
     };
 
     // Background images for panels
@@ -284,21 +304,21 @@ export function parseODF(filePath: string): OrganData {
       const imgKey = `Panel${panelId}Image${i.toString().padStart(3, '0')}`;
       const imgData = parsed[imgKey];
       if (imgData && imgData.Image) {
-        // Usually the first image is the background
         const imgPath = path.resolve(basePath, imgData.Image.replace(/\\/g, '/'));
+        const element: OrganScreenElement = {
+          id: `${panelId}_img_${i}`,
+          type: 'Image',
+          name: `Image ${i}`,
+          x: parseInt(imgData.PositionX || '0'),
+          y: parseInt(imgData.PositionY || '0'),
+          width: 0,
+          height: 0,
+          imageOff: imgPath,
+          isBackground: i === 1,
+          layouts: {}
+        };
         if (i === 1) screen.backgroundImage = imgPath;
-        else {
-          screen.elements.push({
-            id: `${panelId}_img_${i}`,
-            type: 'Image',
-            name: `Image ${i}`,
-            x: parseInt(imgData.PositionX || '0'),
-            y: parseInt(imgData.PositionY || '0'),
-            width: 0, // Need to load image to know size, or it might be in ODF
-            height: 0,
-            imageOff: imgPath
-          });
-        }
+        screen.elements.push(element);
       }
     }
 
@@ -322,7 +342,10 @@ export function parseODF(filePath: string): OrganData {
         const globalSwitch = allSwitches[switchId];
 
         if (globalSwitch) {
-          screen.elements.push({
+          const imgOnStr = psData.ImageOn || globalSwitch.ImageOn;
+          const imgOffStr = psData.ImageOff || globalSwitch.ImageOff;
+
+          const element: OrganScreenElement = {
             id: `${panelId}_sw_${switchId}`,
             type: 'Switch',
             name: psData.Name || globalSwitch.Name || `Switch ${switchId}`,
@@ -330,10 +353,13 @@ export function parseODF(filePath: string): OrganData {
             y: parseInt(psData.PositionY || globalSwitch.PositionY || '0'),
             width: parseInt(psData.MouseRectWidth || globalSwitch.MouseRectWidth || '50'),
             height: parseInt(psData.MouseRectHeight || globalSwitch.MouseRectHeight || '50'),
-            imageOn: (psData.ImageOn || globalSwitch.ImageOn) ? path.resolve(basePath, (psData.ImageOn || globalSwitch.ImageOn).replace(/\\/g, '/')) : undefined,
-            imageOff: (psData.ImageOff || globalSwitch.ImageOff) ? path.resolve(basePath, (psData.ImageOff || globalSwitch.ImageOff).replace(/\\/g, '/')) : undefined,
             linkId: switchIdToStopId[switchId] || switchId // Use StopID if available, else SwitchID
-          });
+          };
+          if (imgOnStr) element.imageOn = path.resolve(basePath, imgOnStr.replace(/\\/g, '/'));
+          if (imgOffStr) element.imageOff = path.resolve(basePath, imgOffStr.replace(/\\/g, '/'));
+          element.layouts = {};
+
+          screen.elements.push(element);
         }
       }
     }

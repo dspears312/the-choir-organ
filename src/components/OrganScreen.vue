@@ -2,33 +2,26 @@
     <div class="organ-screen-container" ref="containerRef">
         <div class="organ-screen-scaler" :style="scalerStyle">
             <div class="organ-screen" :style="screenStyle">
-                <!-- Background Image -->
-                <img v-if="screen.backgroundImage" :src="getImageUrl(screen.backgroundImage)" class="organ-bg"
-                    draggable="false" />
+                <!-- Background Image (Moved to Elements loop for Z-Index accuracy) -->
+                <!-- <img v-if="screen.backgroundImage" ... /> -->
 
                 <!-- All Elements (including backgrounds) -->
-                <div v-for="element in screen.elements" :key="element.id" class="organ-element" :style="{
-                    position: 'absolute',
-                    left: element.x + 'px',
-                    top: element.y + 'px',
-                    width: element.width > 0 ? element.width + 'px' : undefined,
-                    height: element.height > 0 ? element.height + 'px' : undefined,
-                    zIndex: element.zIndex
-                }" :data-element-id="element.id" :class="{
-                    'is-switch': element.type === 'Switch',
-                    'is-active': element.type === 'Switch' && element.linkId &&
-                        organStore.currentCombination.includes(element.linkId)
-                }" @mousedown="handleMouseDown(element, $event)" @mouseenter="handleMouseEnter(element)"
+                <div v-for="element in screen.elements" :key="element.id" class="organ-element"
+                    :style="getElementStyle(element)" :data-element-id="element.id" :class="{
+                        'is-switch': element.type === 'Switch',
+                        'is-active': element.type === 'Switch' && element.linkId &&
+                            organStore.currentCombination.includes(element.linkId)
+                    }" @mousedown="handleMouseDown(element, $event)" @mouseenter="handleMouseEnter(element)"
                     @touchstart="handleTouchStart(element, $event)">
                     <!-- Switch / Stop -->
                     <template v-if="element.type === 'Switch'">
-                        <img :src="getImageUrl((element.linkId && organStore.currentCombination.includes(element.linkId)) ? element.imageOn : element.imageOff)"
-                            class="element-img" :class="{ 'clickable': element.linkId }" draggable="false" />
+                        <img :src="getElementImage(element)" class="element-img"
+                            :class="{ 'clickable': element.linkId }" draggable="false" />
                     </template>
 
                     <!-- Static Image -->
                     <template v-else-if="element.type === 'Image'">
-                        <img :src="getImageUrl(element.imageOff)" class="element-img" draggable="false" />
+                        <img :src="getElementImage(element)" class="element-img" draggable="false" />
                     </template>
 
                     <!-- Label (Future enhancement) -->
@@ -42,26 +35,127 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted, onUnmounted, watch, inject } from 'vue';
+import { computed, ref, onMounted, onUnmounted, watch, inject, nextTick } from 'vue';
 import { useOrganStore } from 'src/stores/organ';
 import type { OrganScreenData, OrganScreenElement } from '../../src-electron/utils/odf-parser';
 
 const props = defineProps<{
     screen: OrganScreenData;
+    autoSwitchLayout?: boolean;
 }>();
 
 // Try to get injected store (remote mode), fallback to Pinia store (main app)
 const organStore: any = inject('organStore', null) || useOrganStore();
 const containerRef = ref<HTMLElement | null>(null);
 const scale = ref(1);
+const activeLayoutIndex = ref(0);
+
+// Helper to get element style based on active layout
+function getElementStyle(element: OrganScreenElement) {
+    let x = element.x;
+    let y = element.y;
+    // Default width/height (usually set on image, but some elements have it)
+    let w = element.width;
+    let h = element.height;
+
+    // Override if active layout (1 or 2) defines new coordinates
+    // Note: parser stores layouts[1] and layouts[2].
+    if (activeLayoutIndex.value > 0) {
+        // Safe access because we check element.layouts
+        const layout = element.layouts ? element.layouts[activeLayoutIndex.value] : undefined;
+
+        if (layout) {
+            x = layout.x;
+            y = layout.y;
+            // Height/Width might not be in layout, use default or scale?
+            // Usually alternate layout only changes position X/Y.
+            // But if we want to support resizing, we need W/H in layout interface.
+            // Currently parser only sends X/Y.
+            w = element.width;
+            h = element.height;
+        } else if (element.isBackground) {
+            // Fallback for background: maintain visibility at default coords
+            x = element.x;
+            y = element.y;
+            w = element.width;
+            h = element.height;
+        } else {
+            // If we are in an alternate layout (1 or 2), and the element does NOT have
+            // coordinates for this layout, it should be hidden.
+            return { display: 'none' };
+        }
+    }
+
+    return {
+        position: 'absolute' as const,
+        left: x + 'px',
+        top: y + 'px',
+        width: w && w > 0 ? w + 'px' : undefined,
+        height: h && h > 0 ? h + 'px' : undefined,
+        zIndex: element.zIndex
+    };
+}
+
+let switchTimeout: any = null;
+
+function checkBestLayout(containerRatio: number) {
+    if (props.autoSwitchLayout === false) return;
+
+    // Layout 0: Default
+    const defaultRatio = props.screen.width / props.screen.height;
+    let bestDifference = Math.abs(defaultRatio - containerRatio);
+    let bestIndex = 0;
+
+    if (switchTimeout === null) {
+        console.groupCollapsed(`[OrganScreen] Checking Layout (Container: ${containerRatio.toFixed(2)})`);
+        console.log(`Layout 0 (Default): ${props.screen.width}x${props.screen.height} (${defaultRatio.toFixed(2)}) -> Diff: ${bestDifference.toFixed(3)}`);
+    }
+
+    // Check Alternate Layouts if they exist
+    if (props.screen.alternateLayouts) {
+        props.screen.alternateLayouts.forEach((layout, index) => {
+            if (!layout) return;
+            // The parser populates index 1 and 2.
+            const ratio = layout.width / layout.height;
+            const diff = Math.abs(ratio - containerRatio);
+
+            if (switchTimeout === null) {
+                console.log(`Layout ${index}: ${layout.width}x${layout.height} (${ratio.toFixed(2)}) -> Diff: ${diff.toFixed(3)} ${diff < bestDifference - 0.1 ? '(BETTER)' : ''}`);
+            }
+
+            // Bias slightly towards keeping current?
+            // Use a simple threshold to prefer alternates if they are significantly better fits
+            if (diff < bestDifference) {
+                bestDifference = diff;
+                bestIndex = index;
+            }
+        });
+    }
+
+    if (switchTimeout === null) {
+        console.groupEnd();
+    }
+
+    if (activeLayoutIndex.value !== bestIndex) {
+        if (switchTimeout) clearTimeout(switchTimeout);
+        switchTimeout = setTimeout(() => {
+            console.log(`[OrganScreen] Switching to Layout ${bestIndex}`);
+            activeLayoutIndex.value = bestIndex;
+            switchTimeout = null;
+            // Trigger re-scale after layout switch
+            nextTick(() => updateScale());
+        }, 200);
+    }
+}
 
 function updateScale() {
     if (!containerRef.value) return;
     const containerWidth = containerRef.value.clientWidth;
     const containerHeight = containerRef.value.clientHeight;
 
-    // Tiny delay to ensure layout if needed? Not usually with ResizeObserver.
     if (containerWidth === 0 || containerHeight === 0) return;
+
+    checkBestLayout(containerWidth / containerHeight);
 
     const widthRatio = containerWidth / props.screen.width;
     const heightRatio = containerHeight / props.screen.height;
@@ -102,15 +196,28 @@ watch(() => [props.screen.width, props.screen.height], () => {
 });
 
 
-const scalerStyle = computed(() => ({
-    width: `${props.screen.width}px`,
-    height: `${props.screen.height}px`,
-    transform: `translate(-50%, -50%) scale(${scale.value})`,
-    transformOrigin: 'center center',
-    position: 'absolute' as const,
-    top: '50%',
-    left: '50%',
-}));
+const scalerStyle = computed(() => {
+    let w = props.screen.width;
+    let h = props.screen.height;
+
+    if (activeLayoutIndex.value > 0 && props.screen.alternateLayouts) {
+        const altLayout = props.screen.alternateLayouts[activeLayoutIndex.value];
+        if (altLayout) {
+            w = altLayout.width;
+            h = altLayout.height;
+        }
+    }
+
+    return {
+        width: `${w}px`,
+        height: `${h}px`,
+        transform: `translate(-50%, -50%) scale(${scale.value})`,
+        transformOrigin: 'center center',
+        position: 'absolute' as const,
+        top: '50%',
+        left: '50%',
+    };
+});
 
 const screenStyle = computed(() => ({
     width: '100%',
@@ -199,6 +306,30 @@ function handleTouchMove(event: TouchEvent) {
         handleMouseEnter(element);
     }
 }
+
+const getElementImage = (element: OrganScreenElement) => {
+    let imgOff = element.imageOff;
+    let imgOn = element.imageOn;
+
+    // Check for alternate layout images
+    if (activeLayoutIndex.value > 0 && element.layouts) {
+        const layout = element.layouts[activeLayoutIndex.value];
+        if (layout) {
+            if (layout.imageOff) imgOff = layout.imageOff;
+            if (layout.imageOn) imgOn = layout.imageOn;
+        }
+    }
+
+    // Determine active state (for Switches)
+    const isSwitchedOn = element.linkId && organStore.currentCombination && organStore.currentCombination.includes(element.linkId);
+
+    // Choose image based on state
+    const finalImage = isSwitchedOn ? imgOn : imgOff;
+
+    // Fallback: if 'On' image is missing but switch is active, default to Off? 
+    // Usually On image should exist if it's a switch. If not, use Off.
+    return getImageUrl(finalImage || imgOff);
+};
 
 function stopDrag() {
     isDragging.value = false;
