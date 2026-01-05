@@ -1,16 +1,15 @@
 import { XMLParser } from 'fast-xml-parser';
 import fs from 'fs';
 import path from 'path';
-import { OrganData, OrganStop, OrganManual, OrganRank, OrganPipe, OrganTremulant, NOISE_KEYWORDS, OrganScreenData, OrganScreenElement } from './odf-parser';
+import {
+    OrganModel, GenericStop, GenericManual, GenericRank, GenericPipe,
+    GenericTremulant, GenericEnclosure, GenericWindchest, GenericCoupler
+} from '../../src/types/organ-model';
+import { NOISE_KEYWORDS } from './odf-parser';
 
 const GLOBAL_ATTENUATION = 14;
 
-/**
- * Parses Hauptwerk XML organ definition files.
- * Correctly resolves sample paths across distributed Installation Packages
- * and maps the hierarchical structure to the common OrganData format.
- */
-export function parseHauptwerk(filePath: string): OrganData {
+export function parseHauptwerk(filePath: string): OrganModel {
     console.log(`[HauptwerkParser] Starting parse for: ${filePath}`);
     const xmlData = fs.readFileSync(filePath, 'utf-8');
     const parser = new XMLParser({
@@ -25,7 +24,6 @@ export function parseHauptwerk(filePath: string): OrganData {
         const lists = allLists.filter((l: any) => l.ObjectType === type || l.ObjectType === `_${type}`);
         const results: any[] = [];
         lists.forEach((list: any) => {
-            // Some lists use <o>, some use <TypeName> or <_TypeName>
             const items = list.o || list[type] || list[`_${type}`] || [];
             if (Array.isArray(items)) {
                 results.push(...items);
@@ -36,18 +34,15 @@ export function parseHauptwerk(filePath: string): OrganData {
         return results;
     };
 
-    // Extract General info
     const general = getObjectList('General')[0];
     const organName = general?.Identification_Name || 'Unknown Hauptwerk Organ';
     const basePath = path.normalize(path.dirname(filePath));
 
     console.log(`[HauptwerkParser] Organ Name: ${organName}`);
 
-    // Resolve the OrganInstallationPackages directories (multiple for distributed organs)
     const packageDirs = findRelevantPackagesDirs(basePath);
     console.log(`[HauptwerkParser] Found ${packageDirs.length} package directories.`);
 
-    // Index all available .wav/.wv files in all identified installation packages
     const sampleIndex = new Map<string, string>();
     packageDirs.forEach(dir => {
         const index = scanInstallationPackages(dir);
@@ -56,36 +51,41 @@ export function parseHauptwerk(filePath: string): OrganData {
     console.log(`[HauptwerkParser] Indexed ${sampleIndex.size} sample files total.`);
 
     let globalGain = parseFloat(general?.AudioOut_AmplitudeLevelAdjustDecibels || general?.AmplitudeLevelAdjustDecibels || '0');
-    // If the file specifies 0 (or defaults to 0), it usually means "no adjustment", 
-    // but without internal engine headroom, this clips. Default to -14dB for safety.
     if (globalGain === 0) globalGain = -GLOBAL_ATTENUATION;
 
-    const organData: OrganData = {
+    const organData: OrganModel = {
         name: organName,
         globalGain,
         stops: {},
         manuals: [],
         ranks: {},
         tremulants: {},
+        enclosures: {},
+        windchests: {},
+        couplers: {},
         screens: [],
-        basePath,
-        sourcePath: filePath,
+        basePath
     };
 
     // 1. Divisions and Keyboards
-    const divisions = getObjectList('Division');
-    const keyboards = getObjectList('Keyboard');
-    const divisionMap = new Map<string, OrganManual>();
+    const appDivisions = getObjectList('Division') || []; // Fallback empty
+    const keyboards = getObjectList('Keyboard') || [];
+    const divisionMap = new Map<string, GenericManual>();
 
-    divisions.forEach((div: any) => {
-        const id = div.a.toString();
-        const keyboard = keyboards.find((k: any) => k.a.toString() === id);
-        const name = keyboard?.b || div.b || `Division ${id}`;
-        const manual: OrganManual = {
+    keyboards.forEach((k: any) => {
+        const id = k.a.toString();
+        const name = k.b || `Manual ${id}`;
+
+        const manual: GenericManual = {
             id,
             name,
             gain: 0,
             stopIds: [],
+            couplerIds: [],
+            tremulantIds: [],
+            firstKey: 36, // Start C
+            lastKey: 96,  // Fallback
+            displayed: true
         };
         organData.manuals.push(manual);
         divisionMap.set(id, manual);
@@ -100,21 +100,16 @@ export function parseHauptwerk(filePath: string): OrganData {
         const isNoise = NOISE_KEYWORDS.some(kw => name.toLowerCase().includes(kw));
         if (isNoise) return;
 
-        const harmonicNumber = parseFloat(rankObj.f || '8'); // Hauptwerk uses 'f' for harmonic/footage mapping (where 8 = 8')
-        const tuning = parseFloat(rankObj.Pitch_TranspositionCents || '0');
-
         organData.ranks[id] = {
             id,
             name,
             gain: 0,
-            pipes: [],
-            stopIds: [],
-            harmonicNumber,
-            tuning
-        } as any;
+            pipes: {},
+            windchestId: '001'
+        };
     });
 
-    // 3. Samples Map (ID -> { packageID, relPath })
+    // 3. Samples Map
     const samples = getObjectList('Sample');
     const sampleMap = new Map<string, { packageID?: string; relPath: string }>();
     samples.forEach((s: any) => {
@@ -126,11 +121,10 @@ export function parseHauptwerk(filePath: string): OrganData {
         }
     });
 
-    // 4. Attack/Release Sample Sets (SetID -> SampleID)
+    // 4. Attack/Release Sets
     const attackSamples = getObjectList('Pipe_SoundEngine01_AttackSample');
     const releaseSamples = getObjectList('Pipe_SoundEngine01_ReleaseSample');
 
-    // SetID -> first SampleID found
     const setIDToAttackSample = new Map<string, string>();
     const setIDToReleaseSample = new Map<string, string>();
 
@@ -150,7 +144,7 @@ export function parseHauptwerk(filePath: string): OrganData {
         }
     });
 
-    // 5. Layers (PipeID -> SetIDs)
+    // 5. Layers
     const layers = getObjectList('Pipe_SoundEngine01_Layer');
     const pipeIDToLayerSets = new Map<string, { attack?: string; release?: string }>();
     layers.forEach((l: any) => {
@@ -158,10 +152,7 @@ export function parseHauptwerk(filePath: string): OrganData {
         const layerID = l.a?.toString();
         if (pipeID && layerID) {
             if (!pipeIDToLayerSets.has(pipeID)) {
-                // For simplicity, take the first layer as the primary sound source
-                const attackSetID = layerID;
-                const releaseSetID = layerID;
-                pipeIDToLayerSets.set(pipeID, { attack: attackSetID, release: releaseSetID });
+                pipeIDToLayerSets.set(pipeID, { attack: layerID, release: layerID });
             }
         }
     });
@@ -181,251 +172,26 @@ export function parseHauptwerk(filePath: string): OrganData {
         const indexedPath = sampleIndex.get(relKey);
         if (indexedPath) return indexedPath;
 
-        // Last resort: relative to ODF (only if index search failed)
         return path.resolve(basePath, info.relPath);
     };
 
-    const resolveImagePath = (pathOrID: string | undefined): string | undefined => {
-        if (!pathOrID) return undefined;
-        // If it's a sample ID (numeric), resolve via sampleMap
-        if (/^\d+$/.test(pathOrID)) {
-            return resolvePath(pathOrID);
-        }
-        // Otherwise, it's a relative path
-        const relPath = pathOrID.replace(/\\/g, '/');
-        const relPathLower = relPath.toLowerCase();
-
-        // 1. Check if it exists in any package via the index
-        const indexedPath = sampleIndex.get(relPathLower);
-        if (indexedPath) return indexedPath;
-
-        // 2. Check if it's explicitly indexed with a package ID (if we had one, but for raw paths we don't always)
-        // However, the walk function indexes everything by its lowercased relative path already.
-
-        // 3. Last resort: check the base path (relative to the organ definition)
-        return path.resolve(basePath, relPath);
-    };
-
-    // 0a. Display Pages (Screens)
-    const displayPages = getObjectList('DisplayPage');
-    const imageSets = getObjectList('ImageSet');
-    const imageSetInstances = getObjectList('ImageSetInstance');
-    const imageSetElements = getObjectList('ImageSetElement');
-    const switches = getObjectList('Switch');
-    const stopObjects = getObjectList('Stop');
-    const switchLinkages = getObjectList('SwitchLinkage');
-
-    // Linkage mapping: Switch ID -> Master Switch ID -> Stop ID
-    const masterSwitchToStopId = new Map<string, string>();
-    stopObjects.forEach((s: any) => {
-        if (s.a && s.d) masterSwitchToStopId.set(s.d.toString(), s.a.toString());
-    });
-
-    const directLinks = new Map<string, string[]>();
-    switchLinkages.forEach((sl: any) => {
-        const a = sl.a?.toString();
-        const b = sl.b?.toString();
-        if (a && b) {
-            if (!directLinks.has(a)) directLinks.set(a, []);
-            directLinks.get(a)!.push(b);
-        }
-    });
-
-    const switchIdToStopId = new Map<string, string>();
-    const resolveStopId = (sid: string, visited = new Set<string>()): string | null => {
-        if (visited.has(sid)) return null;
-        visited.add(sid);
-
-        const stopId = masterSwitchToStopId.get(sid);
-        if (stopId) return stopId;
-
-        const nextSids = directLinks.get(sid) || [];
-        for (const next of nextSids) {
-            const found = resolveStopId(next, visited);
-            if (found) return found;
-        }
-        return null;
-    };
-
-    switches.forEach((sw: any) => {
-        const sid = sw.a?.toString();
-        if (sid) {
-            const stopId = resolveStopId(sid);
-            if (stopId) switchIdToStopId.set(sid, stopId);
-        }
-    });
-
-    // Group ImageSets and ImageSetElements by ID to merge multi-state data
-
-    // Group ImageSets and ImageSetElements by ID to merge multi-state data
-    const imageSetMap = new Map<string, any>();
-
-    // 1. Initial ImageSet data (contains masks/labels)
-    imageSets.forEach((is: any) => {
-        const id = is.a?.toString();
-        if (!id) return;
-        if (!imageSetMap.has(id)) {
-            imageSetMap.set(id, { ...is });
-        } else {
-            Object.assign(imageSetMap.get(id), is);
-        }
-    });
-
-    // 2. Merge ImageSetElement data (contains actual bitmap paths)
-    imageSetElements.forEach((ise: any) => {
-        const id = ise.a?.toString();
-        if (!id) return;
-        let entry = imageSetMap.get(id);
-        if (!entry) {
-            entry = { a: id };
-            imageSetMap.set(id, entry);
-        }
-
-        const stage = parseInt(ise.b || '1');
-        const imgPath = ise.d?.toString();
-        if (imgPath) {
-            if (stage === 1) {
-                entry.imageOff = imgPath;
-            } else if (stage === 2) {
-                entry.imageOn = imgPath;
-            } else if (!entry.imageOff) {
-                entry.imageOff = imgPath;
-            }
-        }
-    });
-
-    displayPages.forEach((page: any) => {
-        const pageID = page.a.toString();
-        const screen: OrganScreenData = {
-            id: pageID,
-            name: page.b || `Page ${pageID}`,
-            width: parseInt(general?.Display_ConsoleScreenWidthPixels || general?.Display_ConsoleScreenWidthPixels_A || '1024'), // Check both
-            height: parseInt(general?.Display_ConsoleScreenHeightPixels || general?.Display_ConsoleScreenHeightPixels_A || '768'),
-            elements: []
-        };
-
-        imageSetInstances.forEach((isi: any) => {
-            if (isi.e?.toString() === pageID) {
-                const imageSetID = isi.c?.toString();
-                const imageSet = imageSetMap.get(imageSetID);
-                if (imageSet) {
-                    // f: Layer/Z-index (Hauptwerk standard)
-                    let zIndex = parseInt(isi.f || '1');
-                    let x = parseInt(isi.g || '0');
-                    let y = parseInt(isi.h || '0');
-                    let w = parseInt(isi.i || imageSet.g || '0');
-                    let h = parseInt(isi.j || imageSet.i || '0');
-
-                    // If X/Y are 0 but f,g are set, maybe f,g is X,Y?
-                    // (Some older HW formats or specific implementations)
-                    if (x === 0 && y === 0 && (isi.f || '0') !== '0' && (isi.g || '0') !== '0' && zIndex > 100) {
-                        x = parseInt(isi.f || '0');
-                        y = parseInt(isi.g || '0');
-                        zIndex = 1; // Reset zIndex if we use f as X
-                    }
-
-                    const element: OrganScreenElement = {
-                        id: isi.a.toString(),
-                        type: 'Image',
-                        name: (isi.b || imageSet.b || `Image ${isi.a}`).toString(),
-                        x,
-                        y,
-                        width: w,
-                        height: h,
-                        zIndex
-                    };
-
-                    // Resolve paths
-                    if (imageSet.imageOff) element.imageOff = resolveImagePath(imageSet.imageOff.toString());
-                    if (imageSet.imageOn) element.imageOn = resolveImagePath(imageSet.imageOn.toString());
-
-                    // Fallbacks for masks if actual images are missing
-                    if (!element.imageOff && imageSet.j) element.imageOff = resolveImagePath(imageSet.j.toString());
-                    if (!element.imageOn && imageSet.k) element.imageOn = resolveImagePath(imageSet.k.toString());
-                    if (!element.imageOff && imageSet.d) element.imageOff = resolveImagePath(imageSet.d.toString());
-
-                    // Switch detection
-                    const isiID = isi.a.toString();
-                    const switchObj = switches.find((sw: any) =>
-                        sw.a?.toString() === isiID ||
-                        sw.k?.toString() === imageSetID ||
-                        sw.c?.toString() === imageSetID ||
-                        sw.a?.toString() === isi.m?.toString()
-                    );
-
-                    if (switchObj) {
-                        element.type = 'Switch';
-                        const sid = switchObj.a.toString();
-                        element.linkId = switchIdToStopId.get(sid) || sid;
-                    }
-
-                    // Decide on a default zIndex. 
-                    // Hauptwerk standard is 1, but we use 7 as a default for "foreground"
-                    // to ensure knobs (often missing 'f') stay above backgrounds (often 'f=1' or 'f=5').
-                    const nameLower = (isi.b || imageSet.b || "").toLowerCase();
-                    const isFullscreen = (a: any) => a.x === 0 && a.y === 0 && (a.width >= screen.width * 0.95 || a.width === 0);
-                    const isBG = nameLower.includes('background') || nameLower.includes('pozadi') || nameLower.includes('stul') || isFullscreen(element);
-
-                    let newZIndex = parseInt(isi.f || (isBG ? '1' : '7'));
-                    element.zIndex = newZIndex;
-
-                    if (isBG && !screen.backgroundImage) {
-                        screen.backgroundImage = element.imageOff || element.imageOn;
-                        if (!screen.backgroundImage && imageSet.d) {
-                            screen.backgroundImage = resolveImagePath(imageSet.d.toString());
-                        }
-                    }
-
-                    // Always add to elements, don't pull out the background
-                    screen.elements.push(element);
-                }
-            }
-        });
-
-        // Stable sort elements by zIndex to ensure correct rendering order.
-        // We also prioritize background-like elements to the bottom of their layer.
-        screen.elements.sort((a, b) => {
-            const az = a.zIndex || 0;
-            const bz = b.zIndex || 0;
-            if (az !== bz) return az - bz;
-
-            // Tie-breaker: Move backgrounds to the bottom of the layer
-            const isBG = (el: any) => el.name.toLowerCase().includes('background') || el.name.toLowerCase().includes('pozadi') || (el.x === 0 && el.y === 0 && (el.width >= screen.width * 0.95 || el.width === 0));
-
-            const aIsBG = isBG(a);
-            const bIsBG = isBG(b);
-
-            if (aIsBG && !bIsBG) return -1;
-            if (!aIsBG && bIsBG) return 1;
-
-            return 0; // Maintain original XML order for same layer/type
-        });
-
-        organData.screens.push(screen);
-    });
-
-    // 6. Pipes (SoundEngine01)
+    // 6. Pipes
     const enginePipes = getObjectList('Pipe_SoundEngine01');
-    let resolvedCount = 0;
-    let fallbackCount = 0;
-
     enginePipes.forEach((p: any) => {
         const pipeID = p.a.toString();
         const rankID = p.b.toString();
         let midiNote = parseInt(p.d);
 
         if (isNaN(midiNote)) {
-            // Fallback: If 'd' is missing, some ODFs might map differently,
-            // but falling back to 'c' (AttackSampleID) is dangerous if it's non-numeric.
-            // Check if 'c' looks like a reasonable note (0-127) before using it.
             const candidate = parseInt(p.c);
             if (!isNaN(candidate) && candidate >= 0 && candidate <= 128) {
                 midiNote = candidate;
             } else {
-                console.warn(`[HauptwerkParser] Pipe ${pipeID} (Rank ${rankID}) has invalid/missing MIDI Note (d=${p.d}). Formatted as NaN.`);
-                midiNote = NaN; // Let it be NaN so we can filter or debug, rather than a random SampleID
+                midiNote = NaN;
             }
         }
+
+        if (isNaN(midiNote)) return;
 
         const rankData = organData.ranks[rankID];
         if (!rankData) return;
@@ -446,39 +212,24 @@ export function parseHauptwerk(filePath: string): OrganData {
         const wavPath = resolvePath(attackSampleID) || '';
         const relPathStr = resolvePath(releaseSampleID);
 
-        if (wavPath && fs.existsSync(wavPath)) {
-            resolvedCount++;
-        } else if (wavPath) {
-            fallbackCount++;
-            if (fallbackCount < 5) console.log(`[HauptwerkParser] Failed to find sample at: ${wavPath}`);
-        }
-
-        // Use pipe-specific pitch if available ('f'), else fall back to rank's harmonicNumber
-        // UPDATE: 'f' in Pipe_SoundEngine01 is often NOT footage (e.g. 16, 7, 9 in Rotterdam). 
-        // Interpreting it as feet causes massive pitch errors (e.g. 4' stop reading '16' -> 0.5 harmonic -> -1 octave).
-        // We now default to 1.0 (Unity) assuming samples are mapped to correct keys.
-        // const pipeF = p.f || p.Pitch_RankBasePitchFeet; 
-        // const pipeHarmonic = pipeF ? (8.0 / parseFloat(pipeF)) : (rankData as any).harmonicNumber;
-
-        rankData.pipes.push({
-            pitch: midiNote.toString(),
+        rankData.pipes[midiNote] = {
+            id: `${rankID}_${midiNote}`,
+            midiNote,
             wavPath,
             releasePath: relPathStr,
-            midiNote,
-            gain: .5,
-            pan: parseFloat(p.n || p.Pan || '0'),
-            tuning: (rankData as any).tuning || 0,
+            gain: 0,
+            tuning: 0,
             harmonicNumber: parseFloat(p.f || '8'),
-        });
+            trackerDelay: 0,
+            isPercussive: false
+        };
     });
 
-    console.log(`[HauptwerkParser] Resolved ${resolvedCount} pipes successfully.${fallbackCount} used fallbacks / missing.`);
-
-    // 7. Stops and StopRank mapping
+    // 7. Stops and Linkages
     const stops = getObjectList('Stop');
     const stopRankLinks = getObjectList('StopRank');
-
     const stopToRanks = new Map<string, string[]>();
+
     stopRankLinks.forEach((link: any) => {
         const stopID = link.a.toString();
         const rankID = link.d.toString();
@@ -490,62 +241,45 @@ export function parseHauptwerk(filePath: string): OrganData {
 
     stops.forEach((s: any) => {
         const id = s.a.toString();
-        const name = s.b || `Stop ${id} `;
+        const name = s.b || `Stop ${id}`;
         const divisionID = s.c?.toString();
 
-        const isNoise = NOISE_KEYWORDS.some(kw => name.toLowerCase().includes(kw));
-        if (isNoise) return;
+        if (NOISE_KEYWORDS.some(kw => name.toLowerCase().includes(kw))) return;
 
         const rankIds = stopToRanks.get(id) || [];
         if (rankIds.length === 0) return;
 
-        const stopData: OrganStop = {
+        organData.stops[id] = {
             id,
             name,
             rankIds,
             manualId: divisionID || '1',
-            volume: 100,
             gain: 0,
-            displayed: true,
+            pitchShift: 0, // Fallback
+            displayed: true
         };
 
-        organData.stops[id] = stopData;
         const manual = divisionMap.get(divisionID);
         if (manual) {
             manual.stopIds.push(id);
         } else if (organData.manuals.length > 0) {
-            const firstManual = organData.manuals[0];
-            if (firstManual) firstManual.stopIds.push(id);
+            organData.manuals[0].stopIds.push(id);
         }
-
-        // Back-populate stopIds to ranks
-        rankIds.forEach(rid => {
-            if (organData.ranks[rid]) {
-                organData.ranks[rid].stopIds.push(id);
-            }
-        });
     });
 
     return organData;
 }
 
-/**
- * Searches upward to find the 'OrganInstallationPackages' folder,
- * and if it's within the 'extracted_organs' root, scans all sibling extractions too.
- */
 function findRelevantPackagesDirs(startDir: string): string[] {
     const results: string[] = [];
     let current = path.resolve(startDir);
     let primaryPkgDir: string | null = null;
     let extractionRoot: string | null = null;
 
-    // 1. Find the primary package dir for THIS extraction
     for (let i = 0; i < 6; i++) {
         const check = path.join(current, 'OrganInstallationPackages');
         if (fs.existsSync(check) && fs.statSync(check).isDirectory()) {
             primaryPkgDir = check;
-            // The shell of the extraction is current
-            // If its parent is 'extracted_organs', we can find siblings
             const parent = path.dirname(current);
             if (path.basename(parent) === 'extracted_organs' || path.basename(parent) === 'userData') {
                 extractionRoot = parent;
@@ -559,7 +293,6 @@ function findRelevantPackagesDirs(startDir: string): string[] {
 
     if (primaryPkgDir) results.push(primaryPkgDir);
 
-    // 2. Discover sibling packages if we found the root
     if (extractionRoot) {
         try {
             const siblings = fs.readdirSync(extractionRoot, { withFileTypes: true });
@@ -579,9 +312,6 @@ function findRelevantPackagesDirs(startDir: string): string[] {
     return results;
 }
 
-/**
- * Recursively scans all subdirectories of 'OrganInstallationPackages' to build a lookup index.
- */
 function scanInstallationPackages(packagesDir: string): Map<string, string> {
     const fileMap = new Map<string, string>();
     try {
@@ -593,7 +323,6 @@ function scanInstallationPackages(packagesDir: string): Map<string, string> {
                 walk(pkgPath, (filePath) => {
                     const relPath = path.relative(pkgPath, filePath).replace(/\\/g, '/');
                     const relPathLower = relPath.toLowerCase();
-                    // Index by relative path and by packageID/relative-path
                     fileMap.set(relPathLower, filePath);
                     fileMap.set(`${pkgID}/${relPathLower}`, filePath);
                 });
@@ -605,9 +334,6 @@ function scanInstallationPackages(packagesDir: string): Map<string, string> {
     return fileMap;
 }
 
-/**
- * Helper for recursive file walking.
- */
 function walk(dir: string, callback: (filePath: string) => void) {
     const files = fs.readdirSync(dir);
     for (const file of files) {
@@ -617,7 +343,6 @@ function walk(dir: string, callback: (filePath: string) => void) {
             walk(fullPath, callback);
         } else if (stat.isFile()) {
             const lowerFile = file.toLowerCase();
-            // Accept both wav and wv (lossless compression) formats, and common image formats
             if (lowerFile.endsWith('.wav') || lowerFile.endsWith('.wv') ||
                 lowerFile.endsWith('.bmp') || lowerFile.endsWith('.png') || lowerFile.endsWith('.jpg')) {
                 callback(fullPath);

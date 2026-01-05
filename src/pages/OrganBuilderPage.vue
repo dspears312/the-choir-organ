@@ -127,6 +127,32 @@
                                                     </q-menu>
                                                 </Drawknob>
                                             </template>
+
+                                            <!-- Couplers -->
+                                            <template v-if="manual.couplerIds && manual.couplerIds.length > 0">
+                                                <!-- <div class="col-12 text-center text-grey-5 q-my-sm">Couplers</div> -->
+                                                <Drawknob v-for="couplerId in manual.couplerIds"
+                                                    :key="`${manual.id}-${couplerId}`"
+                                                    v-if="organStore.organData?.couplers[couplerId]"
+                                                    :name="organStore.organData.couplers[couplerId].name"
+                                                    classification="Coupler" pitch="Cpl"
+                                                    :active="organStore.currentCombination.includes(couplerId)"
+                                                    :volume="0" hide-volume
+                                                    @toggle="organStore.toggleStop(couplerId)" />
+                                            </template>
+
+                                            <!-- Tremulants -->
+                                            <template v-if="manual.tremulantIds && manual.tremulantIds.length > 0">
+                                                <!-- <div class="col-12 text-center text-grey-5 q-my-sm">Tremulants</div> -->
+                                                <Drawknob v-for="tremId in manual.tremulantIds"
+                                                    :key="`${manual.id}-${tremId}`"
+                                                    v-if="organStore.organData?.tremulants[tremId]"
+                                                    :name="organStore.organData.tremulants[tremId].name"
+                                                    classification="Tremulant" pitch="Trem"
+                                                    :active="organStore.currentCombination.includes(`TREM_${tremId}`)"
+                                                    :volume="0" hide-volume
+                                                    @toggle="organStore.toggleStop(`TREM_${tremId}`)" />
+                                            </template>
                                         </div>
                                     </div>
                                 </div>

@@ -39,6 +39,7 @@ enum Command {
         release_path: Option<String>,
         gain: Option<f32>,
         pitch_offset: Option<f32>,
+        delay: Option<f32>,
     },
     #[serde(rename_all = "camelCase")]
     NoteOff { note: u8, stop_id: String },
@@ -88,7 +89,8 @@ fn main() -> anyhow::Result<()> {
                         path, 
                         release_path, 
                         gain, 
-                        pitch_offset, 
+                        pitch_offset,
+                        delay,
                     } => {
                         // On-the-fly Loading Fallback:
                         // Ensure main sample is loaded. `load_sample` returns immediately if already present.
@@ -111,6 +113,7 @@ fn main() -> anyhow::Result<()> {
                             release_path,
                             gain: gain.unwrap_or(1.0),
                             pitch_offset: pitch_offset.unwrap_or(0.0),
+                            delay: delay.unwrap_or(0.0),
                         });
                     },
                     Command::NoteOff { note, stop_id } => {

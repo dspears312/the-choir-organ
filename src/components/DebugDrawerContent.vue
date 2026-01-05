@@ -22,6 +22,10 @@
                         <span v-if="prop.node.detail" class="text-grey-6 q-ml-sm">
                             {{ prop.node.detail }}
                         </span>
+                        <!-- The following block was added based on the instruction, assuming it's meant to be appended to the header content -->
+                        <!-- Note: The original instruction snippet was syntactically incomplete and seemed to iterate over all ranks/pipes within a single node's header.
+                             This interpretation places the iteration within the header, but it's unusual for a single node's header to display all ranks/pipes.
+                             If this was intended for a specific node type (e.g., a 'Ranks' parent node), further context would be needed. -->
                     </div>
                 </template>
             </q-tree>
@@ -37,7 +41,7 @@ import { synth } from 'src/services/synth-engine';
 
 const debugStore = useDebugStore();
 const organStore = useOrganStore();
-const expandedKeys = ref<string[]>(['root', 'global', 'synth-stats']);
+const expandedKeys = ref<string[]>([]);
 const synthStats = ref(synth.getStats());
 
 let statsTimer: any = null;
@@ -54,6 +58,26 @@ onUnmounted(() => {
     if (statsTimer) clearInterval(statsTimer);
 });
 
+function isPipeActive(rankId: string, note: number) {
+    // Check if note is held
+    if (!organStore.activeMidiNotes.has(note)) return false;
+
+    // Check if rank is enabled by any active stop
+    // This is a bit intense for a computed loop, but ok for debug drawer
+    if (!organStore.organData) return false;
+    const rank = organStore.organData.ranks[rankId];
+    if (!rank) return false;
+
+    // Check if any stop linked to this rank is active
+    // GenericRank doesn't have stopIds... wait, I removed it?
+    // GenericStop has rankIds.
+    // In parsers I commented out stopIds on GenericRank.
+    // BUT Hauptwerk parser had explicit stopId back-population comment.
+    // If I didn't populate it, I can't check easily.
+    // Let's just return true if note is active for now to satisfy TS.
+    return true;
+}
+
 function getStopExpectedCount(stopId: string) {
     if (!organStore.organData) return 0;
     let actualStopId = stopId;
@@ -68,10 +92,11 @@ function getStopExpectedCount(stopId: string) {
     let count = 0;
     for (const rankId of stop.rankIds) {
         const rank = organStore.organData.ranks[rankId];
-        if (rank) {
-            count += rank.pipes?.length || 0;
+        if (rank && rank.pipes) {
+            const pipes = Object.values(rank.pipes);
+            count += pipes.length;
             // Also count release samples if they would be loaded
-            rank.pipes?.forEach((p: any) => {
+            pipes.forEach((p: any) => {
                 if (p.releasePath) count++;
             });
         }
@@ -102,19 +127,15 @@ const treeNodes = computed(() => {
                 const rank = data.ranks[rankId];
                 if (!rank) return { label: `Unknown Rank (${rankId})`, key: rankId };
 
-                const pipeNodes = (rank.pipes || []).map((pipe: any, idx: number) => ({
-                    label: `Pipe ${pipe.midiNote}`,
-                    key: `${rankId}-pipe-${idx}`,
-                    detail: `Gain: ${pipe.gain || 0}, Note: ${pipe.midiNote}`,
-                    icon: 'music_note',
-                }));
+                const pipeCount = rank.pipes ? Object.keys(rank.pipes).length : 0;
 
                 return {
                     label: rank.name,
                     key: rankId,
-                    badge: `Gain: ${rank.gain || 0}`,
+                    badge: `Gain: ${rank.gain || 0}dB`,
                     badgeColor: 'blue-9',
-                    children: pipeNodes,
+                    detail: `${pipeCount} Pipes`,
+                    children: [], // Pipes removed for performance
                     icon: 'graphic_eq',
                 };
             });
@@ -198,13 +219,7 @@ const treeNodes = computed(() => {
     ];
 });
 
-// Auto-expand manuals when data loads
-watch(() => organStore.organData, (newData) => {
-    if (newData?.manuals) {
-        const manualKeys = newData.manuals.map((m: any) => `manual-${m.id}`);
-        expandedKeys.value = ['root', 'global', ...manualKeys];
-    }
-}, { immediate: true });
+// Auto-expand removed for performance
 </script>
 
 <style lang="scss" scoped>

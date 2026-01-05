@@ -62,7 +62,7 @@ export function parseStopLabel(fullName: string): { name: string; pitch: string;
     };
 }
 
-export type StopClassification = 'Principal' | 'Flute' | 'String' | 'Reed' | 'Mixture' | null;
+export type StopClassification = 'Principal' | 'Flute' | 'String' | 'Reed' | 'Mixture' | 'Coupler' | 'Tremulant' | null;
 
 function classifyStop(name: string, pitch: string): StopClassification {
     const n = name.toLowerCase();

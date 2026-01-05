@@ -19,6 +19,7 @@ pub struct Voice {
     pub release_path: Option<String>, 
     pub pitch_offset: f32,
     pub is_release: bool,
+    pub tracker_delay_samples: usize,
 }
 
 #[derive(Clone, Copy, PartialEq)] // Added derives for easier comparisons
@@ -41,6 +42,7 @@ impl Voice {
         manual_pitch_factor: Option<f32>,
         pitch_offset: f32,
         is_release: bool,
+        tracker_delay_ms: f32,
     ) -> Self {
         // Calculate pitch shift
         let pitch_src_factor;
@@ -50,22 +52,35 @@ impl Voice {
         } else {
              // Calculate wav tuning based on unity note and fine tune (pitch fraction)
              let mut wav_tuning = 0.0;
-             if let Some(target_root) = sample.root_note {
+             if let Some(mut target_root) = sample.root_note {
+                 // Heuristic: Check if filename contains a 3-digit note number that likely represents the TRUE root
+                 // specific fix for Friesach/GO samples where metadata might be off by 1-2 semitones.
+                 // Only override if the parsed number is within +/- 12 semitones of the metadata root 
+                 // (avoids index filenames like 001.wav being treated as MIDI 1).
+                 if let Some(parsed_root) = parse_root_from_path(&path) {
+                     let diff = (parsed_root as i32 - target_root as i32).abs();
+                     if diff > 0 && diff <= 12 {
+                         log::info!("Voice Correction: Overriding Root {} -> {} based on filename '{}'", target_root, parsed_root, path);
+                         target_root = parsed_root;
+                     }
+                 }
+
                  wav_tuning = (note as i32 - target_root as i32) as f32 * 100.0;
-                 log::info!("Voice DBG: Root {:?} -> {}", sample.root_note, wav_tuning);
+                 // log::info!("Voice DBG: Root {:?} -> {}", target_root, wav_tuning);
                  if let Some(ft) = sample.fine_tune {
-                      log::info!("Voice DBG: Root {:?} FT {} -> Subtracted", sample.root_note, ft);
+                      // log::info!("Voice DBG: Root {:?} FT {} -> Subtracted", target_root, ft);
                       wav_tuning -= ft; // JS uses `- fractionCents`
                  }
              }
 
              // Total tuning (harmonic/pedal/virtual logic handled in passed pitch_offset)
              let total_cents = wav_tuning + pitch_offset;
-             log::info!("Note: {}, Root: {:?}, WavTuning: {}, PitchOffset: {}, TotalCents: {}", note, sample.root_note, wav_tuning, pitch_offset, total_cents);
+             // log::info!("Note: {}, Root: {:?}, WavTuning: {}, PitchOffset: {}, TotalCents: {}", note, sample.root_note, wav_tuning, pitch_offset, total_cents);
              pitch_src_factor = 2.0_f32.powf(total_cents / 1200.0);
         }
 
         let playback_rate = (sample.sample_rate as f32 / output_sample_rate) * pitch_src_factor;
+        let tracker_delay_samples = (tracker_delay_ms * output_sample_rate / 1000.0) as usize;
 
         Self {
             sample,
@@ -85,8 +100,11 @@ impl Voice {
             release_path,
             pitch_offset,
             is_release,
+            tracker_delay_samples,
         }
     }
+
+
 
     pub fn is_note(&self, note: u8, stop_id: &str) -> bool {
         self.note == note && self.sample.stop_id == stop_id
@@ -239,7 +257,18 @@ impl Voice {
     pub fn render_into(&mut self, data: &mut [f32], channels: usize) {
         if self.is_finished() { return; }
         
-        for frame in data.chunks_mut(channels) {
+        let mut data_iter = data.chunks_mut(channels);
+        
+        // Handle tracker delay
+        while self.tracker_delay_samples > 0 {
+            if data_iter.next().is_some() {
+                self.tracker_delay_samples -= 1;
+            } else {
+                return; // Buffer full, continue delaying next block
+            }
+        }
+        
+        for frame in data_iter {
             let (l, r) = self.next_sample();
             frame[0] += l;
             if channels >= 2 {
@@ -250,4 +279,22 @@ impl Voice {
     }
 
 
+}
+
+fn parse_root_from_path(path: &str) -> Option<u32> {
+    // Look for 3 consecutive digits
+    // Safer Backwards scan
+    let chars: Vec<char> = path.chars().collect();
+    let mut i = chars.len();
+    while i >= 3 {
+        i -= 1;
+        if chars[i].is_ascii_digit() && chars[i-1].is_ascii_digit() && chars[i-2].is_ascii_digit() {
+            // Found 3 digits ending at i
+            let s: String = chars[i-2..=i].iter().collect();
+            if let Ok(n) = s.parse::<u32>() {
+                if n < 128 { return Some(n); }
+            }
+        }
+    }
+    None
 }

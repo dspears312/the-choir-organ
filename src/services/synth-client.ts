@@ -132,19 +132,18 @@ export class SynthClient {
         const finalGain = (volume / 100) * linearGain * pedalScale;
 
         // 2. Calculate Pitch Offset (Cents)
-        console.log(note, pipePath, harmonicNumber)
-        const harmonicCents = 1200 * Math.log2(harmonicNumber / 8);
+        // ODF HarmonicNumber usually implies the footage tone, e.g. 4' sounds an octave higher.
+        // If the sample is already recorded at the correct pitch (e.g. C3 file sounds like C4), 
+        // we should NOT verify shift it further. 
+        // "Wildly out of tune" implies we are shifting when we shouldn't.
+        // For now, disabling automatic harmonic shifting. Trust the sample + tuning.
+        const harmonicCents = 0;
         // Combine tuning, harmonic shift, and explicit offset
         const finalPitchOffset = tuning + harmonicCents + pitchOffsetCents;
 
         if (!this.isDistributed) {
-            // If local (non-distributed, unlikely in this setup), call simplified signature?
-            // Existing synth.noteOn still expects old signature unless specific overloaded.
-            // For now, let's keep calling old synth.noteOn if we fallback to main process synth?
-            // But synth.ts will be updated to new signature? 
-            // Yes, I must update synth-engine.ts signature too. 
-            // So here call with new signature logic.
-            synth.noteOn(note, stopId, pipePath, releasePath, finalGain, finalPitchOffset, delay);
+            // Updated synth-engine signature: noteOn(note, stopId, pipePath, releasePath, gain, pitchOffset, delay, manualId, activeTremulants)
+            synth.noteOn(note, stopId, pipePath, releasePath, finalGain, finalPitchOffset, delay, manualId, activeTremulants);
             return;
         }
 

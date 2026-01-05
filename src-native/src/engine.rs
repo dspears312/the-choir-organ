@@ -24,6 +24,7 @@ pub enum EngineCommand {
         release_path: Option<String>,
         gain: f32,
         pitch_offset: f32,
+        delay: f32,
     },
     NoteOff { note: u8, stop_id: String },
     SetGlobalGain(f32),
@@ -106,9 +107,9 @@ impl AudioEngine {
                         EngineCommand::UnloadSample { stop_id, path } => {
                              sampler.unload_sample(&stop_id, &path);
                         },
-                        EngineCommand::NoteOn { 
+                        EngineCommand::NoteOn {
                             note, stop_id, path, release_path, gain, 
-                            pitch_offset,
+                            pitch_offset, delay
                         } => {
                             for voice in voices.iter_mut() {
                                 if voice.is_note(note, &stop_id) {
@@ -121,10 +122,10 @@ impl AudioEngine {
                             }
 
                             if let Some(sample) = sampler.get_sample(&stop_id, &path) {
-                                let voice = Voice::new(
+                            let voice = Voice::new(
                                     sample, path, note, sample_rate, gain, release_path, 
                                     0.005, 0.2, None, pitch_offset, 
-                                    false,
+                                    false, delay
                                 );
                                 voices.push(voice);
                             }
@@ -142,7 +143,7 @@ impl AudioEngine {
                                                  sample, voice.release_path.as_ref().unwrap().clone(),
                                                  note, sample_rate, voice.gain, None, crossfade_time, 0.2, 
                                                  Some(voice.pitch_factor), 
-                                                 voice.pitch_offset, true,
+                                                 voice.pitch_offset, true, 0.0
                                              );
                                              new_voices.push(rel_voice);
                                          }

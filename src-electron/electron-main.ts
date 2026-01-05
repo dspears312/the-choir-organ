@@ -708,11 +708,16 @@ ipcMain.handle('parse-odf', async (event, odfPath: string) => {
   try {
     if (!fs.existsSync(odfPath)) throw new Error(`File not found: ${odfPath}`);
 
-    // 1. Check Cache first
+    // 1. Check Cache first (SKIP in dev mode)
+    const isDev = process.env.NODE_ENV === 'development';
     const cachedData = loadOrganCache(odfPath);
-    if (cachedData) {
+    if (!isDev && cachedData) {
       console.log(`[Main] Using cached organ definition for: ${odfPath} (ranks request)`);
       return cachedData;
+    }
+
+    if (isDev) {
+      console.log(`[Main] Dev mode detected, skipping cache read for: ${odfPath}`);
     }
 
     // 2. Offload parsing to worker thread
@@ -720,8 +725,8 @@ ipcMain.handle('parse-odf', async (event, odfPath: string) => {
       workerData: { filePath: odfPath }
     });
 
-    // 3. Save to Cache if successful
-    if (parsedData && !parsedData.error) {
+    // 3. Save to Cache if successful (and not dev)
+    if (parsedData && !parsedData.error && !isDev) {
       saveOrganCache(odfPath, parsedData);
     }
 

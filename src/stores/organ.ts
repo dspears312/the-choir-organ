@@ -13,10 +13,11 @@ import {
     RecordingSession,
     DEFAULT_AUDIO_SETTINGS
 } from 'src/types/models';
+import { OrganModel, GenericStop, GenericRank, GenericPipe, GenericManual, GenericTremulant } from '../types/organ-model';
 
 export const useOrganStore = defineStore('organ', {
     state: () => ({
-        organData: null as any,
+        organData: null as OrganModel | null,
         currentCombination: [] as string[],
         stopVolumes: {} as Record<string, number>,
         globalVolume: 100, // 0-100%
@@ -409,18 +410,19 @@ export const useOrganStore = defineStore('organ', {
                 const stop = stops[stopId];
                 if (!stop) return;
                 stop.rankIds.forEach((rankId: string) => {
-                    const rank = this.organData.ranks[rankId];
-                    if (!rank) return;
-                    if (this.audioSettings.disabledRanks.includes(rankId)) return;
-                    rank.pipes.forEach((pipe: any) => {
-                        // Main Pipe
-                        pipesToLoad.push({ stopId, pipe, rankId, isRelease: false });
+                    if (this.organData && this.organData.ranks[rankId]) {
+                        const rank = this.organData.ranks[rankId];
+                        if (this.audioSettings.disabledRanks.includes(rankId)) return;
+                        Object.values(rank.pipes).forEach((pipe: any) => {
+                            // Main Pipe
+                            pipesToLoad.push({ stopId, pipe, rankId, isRelease: false });
 
-                        // Release Pipe (if Authentic and exists)
-                        if (this.audioSettings.releaseMode === 'authentic' && pipe.releasePath) {
-                            pipesToLoad.push({ stopId, pipe, rankId, isRelease: true });
-                        }
-                    });
+                            // Release Pipe (if Authentic and exists)
+                            if (this.audioSettings.releaseMode === 'authentic' && pipe.releasePath) {
+                                pipesToLoad.push({ stopId, pipe, rankId, isRelease: true });
+                            }
+                        });
+                    }
                 });
             });
 
@@ -624,7 +626,7 @@ export const useOrganStore = defineStore('organ', {
                             ])
                         ),
                         screens: this.organData?.screens || [],
-                        activeScreenIndex: this.organData?.activeScreenIndex || 0
+                        activeScreenIndex: 0
                     },
                     activatedStops: [...this.currentCombination],
                     // Additional State for Remote App
@@ -726,31 +728,39 @@ export const useOrganStore = defineStore('organ', {
 
             // Fire all ranks in parallel
             stop.rankIds.forEach(async (rankId: string) => {
-                const rank = this.organData.ranks[rankId];
+                const data = this.organData;
+                if (!data) return;
+                const rank = data.ranks[rankId];
                 if (rank) {
-                    const pipe = rank.pipes.find((p: any) => p.midiNote === adjustedNote) || rank.pipes[adjustedNote - 36];
+                    const pipe = rank.pipes[adjustedNote];
                     if (pipe) {
-                        const manual = this.organData.manuals.find((m: any) => String(m.id) === String(stop.manualId));
+                        const manual = data.manuals.find(m => String(m.id) === String(stop.manualId));
                         const isPedal = manual?.name.toLowerCase().includes('pedal') || false;
-                        const combinedGain = (manual?.gain || 0) + (stop.gain || 0) + (rank.gain || 0) + (pipe.gain || 0);
+
+                        // Combined Gain (dB)
+                        // Global Gain + Manual Gain + Stop Gain + Pipe Gain (includes Rank/WC)
+                        const combinedGain = (data.globalGain || 0) +
+                            (manual?.gain || 0) +
+                            (stop.gain || 0) +
+                            (pipe.gain || 0);
 
                         const activeTremulants = this.currentCombination
                             .filter(id => id.startsWith('TREM_'))
                             .map(id => {
                                 const tremId = id.replace('TREM_', '');
                                 // DEEP CLONE to avoid Proxy/Cloning error in Worker
-                                return JSON.parse(JSON.stringify(this.organData.tremulants[tremId]));
+                                return JSON.parse(JSON.stringify(data.tremulants[tremId]));
                             })
                             .filter(trem => trem && (!trem.manualId || String(trem.manualId) === String(manual?.id)));
 
                         // CHECK IF RANK IS ENABLED
                         if (this.audioSettings.disabledRanks.includes(rankId)) {
-                            // Skip this pipe
                             return;
                         }
 
-                        // Pass adjustedNote as the primary note.
-                        // Remove renderingNote argument (previously 13th arg).
+                        // Calculate total delay
+                        const totalDelay = (pipe.trackerDelay || 0) + (vs?.delay || 0);
+
                         synth.noteOn(
                             adjustedNote,
                             stopId,
@@ -764,7 +774,7 @@ export const useOrganStore = defineStore('organ', {
                             manual?.id,
                             activeTremulants,
                             pitchShift,
-                            vs?.delay || 0
+                            totalDelay
                         );
                     }
                 }

@@ -183,6 +183,17 @@ const displayLabel = computed(() => {
   &.type-string:not(.is-virtual) .knob-label {
     color: #3f0c73;
   }
+
+  /* COUPLER: Dark Grey Text */
+  &.type-coupler:not(.is-virtual) .knob-label {
+    color: #333333;
+    font-style: italic;
+  }
+
+  /* TREMULANT: Orange/Brown Text */
+  &.type-tremulant:not(.is-virtual) .knob-label {
+    color: #8b4500;
+  }
 }
 
 .knob-stem {
