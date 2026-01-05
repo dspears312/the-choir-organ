@@ -18,26 +18,27 @@ use sampler::Sampler;
 enum Command {
     #[serde(rename_all = "camelCase")]
     LoadSample { 
-        stop_id: String, 
+        stop_id: String,
+        #[serde(alias = "pipePath")]
         path: String,
         max_duration: Option<f32>
     },
     #[serde(rename_all = "camelCase")]
     UnloadSample {
         stop_id: String,
+        #[serde(alias = "pipePath")]
         path: String
     },
+
     #[serde(rename_all = "camelCase")]
-    NoteOn { 
+    NoteOn {  
         note: u8, 
         stop_id: String, 
+        #[serde(alias = "pipePath")]
         path: String, 
         release_path: Option<String>,
-        gain_db: Option<f32>,
-        is_pedal: Option<bool>,
-        harmonic_number: Option<f32>,
-        pitch_offset_cents: Option<f32>,
-        rendering_note: Option<u8>,
+        gain: Option<f32>,
+        pitch_offset: Option<f32>,
     },
     #[serde(rename_all = "camelCase")]
     NoteOff { note: u8, stop_id: String },
@@ -86,11 +87,8 @@ fn main() -> anyhow::Result<()> {
                         stop_id, 
                         path, 
                         release_path, 
-                        gain_db, 
-                        is_pedal,
-                        harmonic_number,
-                        pitch_offset_cents,
-                        rendering_note,
+                        gain, 
+                        pitch_offset, 
                     } => {
                         // On-the-fly Loading Fallback:
                         // Ensure main sample is loaded. `load_sample` returns immediately if already present.
@@ -111,11 +109,8 @@ fn main() -> anyhow::Result<()> {
                             stop_id, 
                             path, 
                             release_path,
-                            gain: 10.0f32.powf(gain_db.unwrap_or(0.0) / 20.0),
-                            is_pedal: is_pedal.unwrap_or(false),
-                            harmonic_number: harmonic_number.unwrap_or(1.0),
-                            pitch_offset_cents: pitch_offset_cents.unwrap_or(0.0),
-                            rendering_note,
+                            gain: gain.unwrap_or(1.0),
+                            pitch_offset: pitch_offset.unwrap_or(0.0),
                         });
                     },
                     Command::NoteOff { note, stop_id } => {

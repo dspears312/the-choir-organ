@@ -100,13 +100,18 @@ export function parseHauptwerk(filePath: string): OrganData {
         const isNoise = NOISE_KEYWORDS.some(kw => name.toLowerCase().includes(kw));
         if (isNoise) return;
 
+        const harmonicNumber = parseFloat(rankObj.f || '8'); // Hauptwerk uses 'f' for harmonic/footage mapping (where 8 = 8')
+        const tuning = parseFloat(rankObj.Pitch_TranspositionCents || '0');
+
         organData.ranks[id] = {
             id,
             name,
             gain: 0,
             pipes: [],
-            stopIds: []
-        };
+            stopIds: [],
+            harmonicNumber,
+            tuning
+        } as any;
     });
 
     // 3. Samples Map (ID -> { packageID, relPath })
@@ -422,10 +427,8 @@ export function parseHauptwerk(filePath: string): OrganData {
             }
         }
 
-        const fVal = parseFloat(p.f || '8');
-        const harmonicNumber = fVal > 0 ? 8.0 / fVal : 1.0;
-
-        if (!organData.ranks[rankID]) return;
+        const rankData = organData.ranks[rankID];
+        if (!rankData) return;
 
         let attackSampleID: string | undefined;
         let releaseSampleID: string | undefined;
@@ -440,9 +443,6 @@ export function parseHauptwerk(filePath: string): OrganData {
             releaseSampleID = setIDToReleaseSample.get(layerSets.release);
         }
 
-        //wavPath = resolvePath(attackSampleID) || '';
-        //relPathStr = resolvePath(releaseSampleID);
-
         const wavPath = resolvePath(attackSampleID) || '';
         const relPathStr = resolvePath(releaseSampleID);
 
@@ -453,21 +453,26 @@ export function parseHauptwerk(filePath: string): OrganData {
             if (fallbackCount < 5) console.log(`[HauptwerkParser] Failed to find sample at: ${wavPath}`);
         }
 
-        organData.ranks[rankID].pipes.push({
+        // Use pipe-specific pitch if available ('f'), else fall back to rank's harmonicNumber
+        // UPDATE: 'f' in Pipe_SoundEngine01 is often NOT footage (e.g. 16, 7, 9 in Rotterdam). 
+        // Interpreting it as feet causes massive pitch errors (e.g. 4' stop reading '16' -> 0.5 harmonic -> -1 octave).
+        // We now default to 1.0 (Unity) assuming samples are mapped to correct keys.
+        // const pipeF = p.f || p.Pitch_RankBasePitchFeet; 
+        // const pipeHarmonic = pipeF ? (8.0 / parseFloat(pipeF)) : (rankData as any).harmonicNumber;
+
+        rankData.pipes.push({
             pitch: midiNote.toString(),
             wavPath,
             releasePath: relPathStr,
             midiNote,
-            // 'p' is Gain (likely AudioOut_AmplitudeLevelAdjustDecibels)
-            // 'n' is Stereo Pan
-            gain: .5, //parseFloat(p.p || p.AmplitudeLevelAdjustDecibels || '0') - GLOBAL_ATTENUATION,
+            gain: .5,
             pan: parseFloat(p.n || p.Pan || '0'),
-            tuning: 0,
-            harmonicNumber,
+            tuning: (rankData as any).tuning || 0,
+            harmonicNumber: parseFloat(p.f || '8'),
         });
     });
 
-    console.log(`[HauptwerkParser] Resolved ${resolvedCount} pipes successfully. ${fallbackCount} used fallbacks/missing.`);
+    console.log(`[HauptwerkParser] Resolved ${resolvedCount} pipes successfully.${fallbackCount} used fallbacks / missing.`);
 
     // 7. Stops and StopRank mapping
     const stops = getObjectList('Stop');
@@ -485,7 +490,7 @@ export function parseHauptwerk(filePath: string): OrganData {
 
     stops.forEach((s: any) => {
         const id = s.a.toString();
-        const name = s.b || `Stop ${id}`;
+        const name = s.b || `Stop ${id} `;
         const divisionID = s.c?.toString();
 
         const isNoise = NOISE_KEYWORDS.some(kw => name.toLowerCase().includes(kw));

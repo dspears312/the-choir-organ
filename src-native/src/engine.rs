@@ -1,9 +1,11 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use crossbeam_channel::Receiver;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use log::{info, error};
 use crate::sampler::Sampler;
 use crate::voice::Voice;
+use rayon::prelude::*;
+
 
 pub enum EngineCommand {
     LoadSample { 
@@ -21,10 +23,7 @@ pub enum EngineCommand {
         path: String, 
         release_path: Option<String>,
         gain: f32,
-        is_pedal: bool,
-        harmonic_number: f32,
-        pitch_offset_cents: f32,
-        rendering_note: Option<u8>,
+        pitch_offset: f32,
     },
     NoteOff { note: u8, stop_id: String },
     SetGlobalGain(f32),
@@ -36,9 +35,9 @@ pub struct AudioEngine {
     sampler: Arc<Sampler>,
     command_receiver: Receiver<EngineCommand>,
     voices: Vec<Voice>,
-    global_gain: f32,
-    release_mode: String,
-    loading_mode: String,
+    pub global_gain: f32,
+    pub release_mode: String,
+    pub loading_mode: String,
 }
 
 impl AudioEngine {
@@ -52,6 +51,7 @@ impl AudioEngine {
             loading_mode: "none".to_string(),
         }
     }
+
 
     pub fn run(&mut self) -> anyhow::Result<()> {
         let host = cpal::default_host();
@@ -80,21 +80,13 @@ impl AudioEngine {
 
         info!("Audio Engine Initialized: Device: {:?}, Sample Rate: {}, Channels: {}", device.name().unwrap_or("Unknown".to_string()), sample_rate, channels);
 
-        // We use Raw pointers/Unsafe or Arc/RwLock for fields that needs to be updated by UI while audio is running.
-        // But since this is a simple command-based engine, we can just process commands at the start of each block.
-        // To avoid moving self into the closure, we extract the bits we need.
-        
-        // However, `global_gain` etc are NOT currently atomic. 
-        // Let's use local variables in the thread that are updated by commands.
-        
         let rx = self.command_receiver.clone();
         let sampler = self.sampler.clone();
         
-        // State variables inside the thread
         let mut voices: Vec<Voice> = Vec::with_capacity(512);
-        let mut global_gain = 1.0;
-        let mut release_mode = "authentic".to_string();
-        let mut loading_mode = "none".to_string();
+        let mut global_gain = self.global_gain;
+        let mut release_mode = self.release_mode.clone();
+        let mut loading_mode = self.loading_mode.clone();
 
         let err_fn = |err| eprintln!("an error occurred on stream: {}", err);
 
@@ -115,22 +107,13 @@ impl AudioEngine {
                              sampler.unload_sample(&stop_id, &path);
                         },
                         EngineCommand::NoteOn { 
-                            note, 
-                            stop_id, 
-                            path, 
-                            release_path, 
-                            gain, 
-                            is_pedal,
-                            harmonic_number,
-                            pitch_offset_cents,
-                            rendering_note,
+                            note, stop_id, path, release_path, gain, 
+                            pitch_offset,
                         } => {
-                            // Restrike logic: cut off previous voices for this pipe
                             for voice in voices.iter_mut() {
                                 if voice.is_note(note, &stop_id) {
-                                    // Quick fade out for previous strikes (primary or release)
                                     if voice.state != crate::voice::VoiceState::Finished {
-                                        voice.release_samples = 0.01 * sample_rate; // 10ms fade
+                                        voice.release_samples = 0.01 * sample_rate;
                                         voice.state = crate::voice::VoiceState::Releasing;
                                         voice.samples_since_release = 0.0;
                                     }
@@ -138,22 +121,11 @@ impl AudioEngine {
                             }
 
                             if let Some(sample) = sampler.get_sample(&stop_id, &path) {
-                                let mut voice = Voice::new(
-                                    sample, 
-                                    path,
-                                    note, 
-                                    sample_rate, 
-                                    is_pedal, 
-                                    release_path, 
-                                    0.005, 
-                                    0.2, 
-                                    None,
-                                    harmonic_number,
-                                    pitch_offset_cents,
-                                    rendering_note,
-                                    false, // is_release = false
+                                let voice = Voice::new(
+                                    sample, path, note, sample_rate, gain, release_path, 
+                                    0.005, 0.2, None, pitch_offset, 
+                                    false,
                                 );
-                                voice.set_gain(gain);
                                 voices.push(voice);
                             }
                         },
@@ -167,28 +139,17 @@ impl AudioEngine {
                                         voice.release();
                                          if let Some(sample) = sampler.get_sample(&stop_id, voice.release_path.as_ref().unwrap()) {
                                              let mut rel_voice = Voice::new(
-                                                 sample, 
-                                                 voice.release_path.as_ref().unwrap().clone(),
-                                                 note, 
-                                                 sample_rate, 
-                                                 false, 
-                                                 None, 
-                                                 crossfade_time, 
-                                                 0.2, 
-                                                 Some(voice.pitch_factor),
-                                                 voice.harmonic_number, 
-                                                 voice.pitch_offset_cents, 
-                                                 Some(voice.rendering_note),
-                                                 true, // is_release = true
+                                                 sample, voice.release_path.as_ref().unwrap().clone(),
+                                                 note, sample_rate, voice.gain, None, crossfade_time, 0.2, 
+                                                 Some(voice.pitch_factor), 
+                                                 voice.pitch_offset, true,
                                              );
-                                             rel_voice.set_gain(voice.gain);
                                              new_voices.push(rel_voice);
                                          }
                                     } else {
                                         voice.release_samples = 0.2 * sample_rate;
                                         voice.release();
                                     }
-                                    
                                     if loading_mode == "none" {
                                         sampler.unload_sample(&stop_id, &voice.path);
                                     }
@@ -201,7 +162,7 @@ impl AudioEngine {
                     }
                 }
 
-                // 2. Auto-Swap logic (Partial -> Full)
+                // 2. Auto-Swap
                 for voice in voices.iter_mut() {
                     if !voice.sample.is_full {
                          if let Some(full_sample) = sampler.get_sample(&voice.sample.stop_id, &voice.path) {
@@ -211,56 +172,48 @@ impl AudioEngine {
                          }
                     }
                 }
-                
-                // Append spawned release voices
                 voices.append(&mut new_voices);
 
-                // 2. Render Audio
-                for frame in data.chunks_mut(channels) {
-                    let mut left = 0.0;
-                    let mut right = 0.0;
-                    
-                    for voice in voices.iter_mut() {
-                        let (l, r) = voice.next_sample();
-                        left += l;
-                        right += r;
-                    }
-                    
-                    left *= global_gain;
-                    right *= global_gain;
-
-                    if channels >= 2 {
-                        frame[0] = left;
-                        frame[1] = right;
+                // 3. Render
+                data.fill(0.0);
+                if !voices.is_empty() {
+                    if voices.len() > 32 {
+                        let block_size = data.len();
+                        let mixed_data = voices.par_iter_mut()
+                            .fold(|| vec![0.0; block_size], |mut acc, voice| {
+                                voice.render_into(&mut acc, channels);
+                                acc
+                            })
+                            .reduce(|| vec![0.0; block_size], |mut a, b| {
+                                for i in 0..block_size { a[i] += b[i]; }
+                                a
+                            });
+                        data.copy_from_slice(&mixed_data);
                     } else {
-                        frame[0] = (left + right) * 0.5;
+                        for voice in voices.iter_mut() {
+                            voice.render_into(data, channels);
+                        }
                     }
                 }
-                
-                // Cleanup finished voices
+
+                if global_gain != 1.0 {
+                    for sample in data.iter_mut() { *sample *= global_gain; }
+                }
+
+                // 4. Cleanup
                 let mut finished_voices = Vec::new();
                 voices.retain(|voice| {
                     if voice.is_finished() {
-                        if loading_mode == "none" {
-                            finished_voices.push((voice.stop_id.clone(), voice.path.clone()));
-                        }
+                        if loading_mode == "none" { finished_voices.push((voice.stop_id.clone(), voice.path.clone())); }
                         false
-                    } else {
-                        true
-                    }
+                    } else { true }
                 });
+                for (sid, path) in finished_voices { sampler.unload_sample(&sid, &path); }
 
-                // Exhaustive unloading for "none" mode
-                for (sid, path) in finished_voices {
-                    sampler.unload_sample(&sid, &path);
-                }
-
-                // Periodic Reporting (Approx every 5 seconds)
-                // We use a simple counter for efficiency
-                // Assuming block size of 256-1024
+                // 5. Reporting
                 static mut SAMPLE_COUNT: usize = 0;
                 unsafe {
-                    SAMPLE_COUNT += data.len() / channels;
+                    SAMPLE_COUNT += data.len() / (channels + 1).min(1); // avoid div by zero
                     if SAMPLE_COUNT >= 240000 {
                         SAMPLE_COUNT = 0;
                         let usage_mb = sampler.get_memory_usage() as f32 / 1024.0 / 1024.0;
@@ -274,25 +227,6 @@ impl AudioEngine {
         )?;
 
         stream.play()?;
-        
-        // Keep thread alive and report memory usage periodically
-        let mut last_report = std::time::Instant::now();
-        loop {
-            if last_report.elapsed().as_secs() >= 5 {
-                let usage_mb = self.sampler.get_memory_usage() as f32 / 1024.0 / 1024.0;
-                info!("Memory Usage: {:.2} MB (Voices: {})", usage_mb, self.voices.len()); 
-                // wait, self.voices is not used in the thread. 
-                // We should probably use a shared state or just accept we log from main loop.
-                last_report = std::time::Instant::now();
-            }
-            std::thread::sleep(std::time::Duration::from_millis(1000));
-        }
+        loop { std::thread::sleep(std::time::Duration::from_millis(1000)); }
     }
-}
-
-struct EngineState {
-    voices: Vec<Voice>,
-    global_gain: f32,
-    sampler: Arc<Sampler>,
-    pending_commands: Receiver<EngineCommand>,
 }

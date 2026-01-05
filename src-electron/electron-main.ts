@@ -89,7 +89,7 @@ protocol.registerSchemesAsPrivileged([
 
 let mainWindow: BrowserWindow | undefined;
 let workerWindows: BrowserWindow[] = [];
-let rustProcess: ChildProcess | null = null;
+let rustProcesses: ChildProcess[] = []; // Changed to array
 let isCancellationRequested = false;
 let memoryInterval: NodeJS.Timeout | null = null;
 
@@ -867,66 +867,117 @@ ipcMain.handle('format-volume', async (event, { path: folderPath, label }) => {
 
 
 ipcMain.handle('create-workers', async (event, count: number) => {
-  if (count == 0) {
-    if (workerWindows.length > 0) {
-      console.log(`[Main] Unloading workers...`);
-      workerWindows.forEach(w => {
-        console.log(w)
-        try { w.destroy(); } catch (e) { console.error(e) }
+  // CLEANUP
+  if (workerWindows.length > 0) {
+    console.log(`[Main] Unloading JS workers...`);
+    workerWindows.forEach(w => { try { w.destroy(); } catch (e) { } });
+    workerWindows = [];
+  }
+  if (rustProcesses.length > 0) {
+    console.log(`[Main] Killing Rust workers...`);
+    rustProcesses.forEach(p => { try { p.kill(); } catch (e) { } });
+    rustProcesses = [];
+  }
+
+  if (count === 0) return { success: true };
+
+  const settings = loadSettings();
+  const useRust = (settings as any)?.useRustEngine;
+
+  if (useRust) {
+    console.log(`[Main] Spawning ${count} Rust worker processes...`);
+
+    let binaryPath = '';
+    if (process.env.DEV) {
+      binaryPath = path.resolve(process.cwd(), 'src-native/target/release/synth-engine');
+    } else {
+      binaryPath = path.resolve(process.resourcesPath, 'bin', 'synth-engine');
+      if (process.platform === 'win32') binaryPath += '.exe';
+    }
+
+    if (!fs.existsSync(binaryPath)) {
+      console.error(`Rust binary not found at ${binaryPath}`);
+      return { error: 'Rust binary not found' };
+    }
+
+    for (let i = 0; i < count; i++) {
+      const proc = spawn(binaryPath, [], {
+        stdio: ['pipe', 'pipe', 'inherit'],
+        env: { ...process.env, RUST_LOG: 'info', WORKER_ID: i.toString() }
       });
-      workerWindows = [];
+
+      proc.stdout?.on('data', (data) => {
+        const lines = data.toString().split('\n');
+        for (const line of lines) {
+          if (!line.trim().startsWith('{')) continue;
+          try {
+            const msg = JSON.parse(line);
+            if (msg.type === 'sample-loaded') {
+              batchedSampleCount++;
+              const now = Date.now();
+              if (now - lastBatchTime > BATCH_INTERVAL_MS) sendBatchedProgress();
+            }
+            // Handle other events like stats if needed
+          } catch (e) { }
+        }
+      });
+
+      rustProcesses.push(proc);
+
+      // Simulate ready signal
+      setTimeout(() => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('worker-ready', i);
+        }
+      }, 100);
     }
 
     return { success: true };
+
   } else {
-    console.log(`[Main] Creating ${count} worker windows...`);
+    // JS Workers (Existing Logic)
+    console.log(`[Main] Creating ${count} JS worker windows...`);
+    // ... logic to create windows ...
+    workerWindows = [];
+    const loadPromises: Promise<void>[] = [];
 
-    // Close existing workers
-    workerWindows.forEach(w => {
-      try { w.destroy(); } catch (e) {/* ignore */ }
-    });
-  }
+    for (let i = 0; i < count; i++) {
+      const workerWin = new BrowserWindow({
+        show: false,
+        webPreferences: {
+          contextIsolation: true,
+          autoplayPolicy: 'no-user-gesture-required',
+          preload: path.resolve(currentDir, path.join(process.env.QUASAR_ELECTRON_PRELOAD_FOLDER, 'electron-preload' + process.env.QUASAR_ELECTRON_PRELOAD_EXTENSION)),
+        }
+      });
+      // workerWin.webContents.openDevTools({ mode: 'detach' });
+      workerWindows.push(workerWin);
 
-  workerWindows = [];
-  const loadPromises: Promise<void>[] = [];
-
-  for (let i = 0; i < count; i++) {
-    const workerWin = new BrowserWindow({
-      show: false, // Keep hidden
-      webPreferences: {
-        contextIsolation: true,
-        autoplayPolicy: 'no-user-gesture-required',
-        preload: path.resolve(
-          currentDir,
-          path.join(process.env.QUASAR_ELECTRON_PRELOAD_FOLDER, 'electron-preload' + process.env.QUASAR_ELECTRON_PRELOAD_EXTENSION)
-        ),
+      if (process.env.DEV) {
+        loadPromises.push(workerWin.loadURL(`${process.env.APP_URL}/#/worker`));
+      } else {
+        loadPromises.push(workerWin.loadFile('index.html', { hash: '/worker' }));
       }
-    });
-
-    // workerWin.webContents.openDevTools({ mode: 'detach' }); 
-    workerWindows.push(workerWin);
-
-    if (process.env.DEV) {
-      loadPromises.push(workerWin.loadURL(`${process.env.APP_URL}/#/worker`));
-    } else {
-      loadPromises.push(workerWin.loadFile('index.html', { hash: '/worker' }));
     }
-  }
 
-  try {
-    await Promise.all(loadPromises);
-  } catch (e) {
-    console.error('[Main] Error loading worker windows:', e);
+    try { await Promise.all(loadPromises); } catch (e) { console.error(e); }
+    return { success: true };
   }
-
-  return { success: true };
 });
 
 ipcMain.on('send-worker-command', (event, { workerIndex, command }) => {
-  if (workerWindows[workerIndex]) {
+  // Check Rust first
+  if (rustProcesses[workerIndex]) {
+    const proc = rustProcesses[workerIndex];
+    if (proc.stdin) {
+      proc.stdin.write(JSON.stringify(command) + '\n');
+    }
+  } else if (workerWindows[workerIndex]) {
+    // Fallback to JS
     workerWindows[workerIndex].webContents.send('worker-command', command);
   }
 });
+// REMOVED LEGACY RUST HANDLERS (spawn-rust-engine, kill-rust-engine, send-rust-command)
 
 ipcMain.on('worker-log', (event, msg) => {
   // Find which worker sent this
@@ -1175,80 +1226,3 @@ if (!gotTheLock) {
 }
 
 // Rust Engine Handlers
-ipcMain.handle('spawn-rust-engine', async () => {
-  if (rustProcess) {
-    console.log('[Main] Rust engine already running');
-    return { success: true };
-  }
-
-  let binaryPath = '';
-  if (process.env.DEV) {
-    binaryPath = path.resolve(process.cwd(), 'src-native/target/release/synth-engine');
-  } else {
-    // Prod path
-    binaryPath = path.resolve(process.resourcesPath, 'bin', 'synth-engine');
-    if (process.platform === 'win32') binaryPath += '.exe';
-  }
-
-  console.log(`[Main] Spawning Rust engine: ${binaryPath}`);
-
-  try {
-    if (!fs.existsSync(binaryPath)) {
-      throw new Error(`Binary not found at ${binaryPath}`);
-    }
-
-    rustProcess = spawn(binaryPath, [], {
-      stdio: ['pipe', 'pipe', 'inherit'], // pipe stdin and stdout
-      env: { ...process.env, RUST_LOG: 'info' }
-    });
-
-    if (rustProcess.stdout) {
-      rustProcess.stdout.on('data', (data) => {
-        const lines = data.toString().split('\n');
-        for (const line of lines) {
-          if (!line.trim().startsWith('{')) continue;
-          try {
-            const msg = JSON.parse(line);
-            if (msg.type === 'sample-loaded') {
-              batchedSampleCount++;
-              const now = Date.now();
-              if (now - lastBatchTime > BATCH_INTERVAL_MS) {
-                sendBatchedProgress();
-              }
-            }
-          } catch (e) {
-            // Ignore non-json
-          }
-        }
-      });
-    }
-
-    rustProcess.on('exit', (code) => {
-      console.log(`[Main] Rust engine exited with code ${code}`);
-      rustProcess = null;
-    });
-
-    rustProcess.on('error', (err) => {
-      console.error(`[Main] Rust engine error:`, err);
-    });
-
-    return { success: true };
-  } catch (e: any) {
-    console.error(e);
-    return { error: e.message };
-  }
-});
-
-ipcMain.handle('kill-rust-engine', () => {
-  if (rustProcess) {
-    rustProcess.kill();
-    rustProcess = null;
-  }
-  return { success: true };
-});
-
-ipcMain.on('send-rust-command', (event, command) => {
-  if (rustProcess && rustProcess.stdin) {
-    rustProcess.stdin.write(JSON.stringify(command) + '\n');
-  }
-});

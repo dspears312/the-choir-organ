@@ -1,16 +1,16 @@
 
 import { synth } from './synth-engine';
 
+// ... (imports remain) ...
+
 export class SynthClient {
     private workerCount = 0;
-    private workerRoundRobin = 0;
     // Map stopId to workerIndex
     private stopToWorker: Record<string, number> = {};
     private isDistributed = false;
-    private isRustEngine = false;
     private loadingMode: 'none' | 'quick' | 'full' = 'full';
-    private releaseMode: 'authentic' | 'convolution' | 'none' = 'authentic';
 
+    // Cache for broadcasting
     private cachedGlobalGain = 0;
     private cachedReleaseMode: 'authentic' | 'convolution' | 'none' = 'authentic';
     private cachedReverbParams = { length: 2.0, mix: 0.3 };
@@ -28,20 +28,7 @@ export class SynthClient {
         this.isDistributed = true;
         this.stopToWorker = {};
 
-        // Check settings for Rust Engine
-        const settings = await window.myApi.loadUserSettings();
-        this.isRustEngine = !!settings?.useRustEngine;
-
-        if (this.isRustEngine) {
-            console.log('[SynthClient] Initializing EXPERIMENTAL Rust Engine...');
-            await window.myApi.spawnRustEngine();
-            // Sync initial settings
-            this.setGlobalGain(this.cachedGlobalGain);
-            this.setReleaseMode(this.cachedReleaseMode);
-            return;
-        }
-
-        // Set up listener BEFORE creating workers to avoid race conditions
+        // Set up listener BEFORE creating workers
         const readyPromise = new Promise<void>((resolve) => {
             const readySet = new Set<number>();
             const cleanup = window.myApi.onWorkerReady((index: number) => {
@@ -53,17 +40,17 @@ export class SynthClient {
                 }
             });
 
-            // Fallback timeout (in case of error)
+            // Fallback timeout
             setTimeout(() => {
                 if (readySet.size < workerCount) {
                     console.warn(`[SynthClient] Timeout waiting for workers. only ${readySet.size}/${workerCount} ready.`);
                     cleanup();
                     resolve();
                 }
-            }, 10000); // Increased timeout to 10s for stability
+            }, 15000);
         });
 
-        // Initialize workers in main process
+        // Initialize workers in main process (Main process decides if JS or Rust based on settings)
         await window.myApi.createWorkers(workerCount);
 
         // Wait for workers to report ready
@@ -76,7 +63,6 @@ export class SynthClient {
 
     private syncWorkers() {
         if (!this.isDistributed) return;
-        // Broadcast cached settings to ensure new workers are in sync
         this.setGlobalGain(this.cachedGlobalGain);
         this.setReleaseMode(this.cachedReleaseMode);
         this.configureReverb(this.cachedReverbParams.length, this.cachedReverbParams.mix);
@@ -94,8 +80,6 @@ export class SynthClient {
         let minCount = Infinity;
         let worker = 0;
 
-        // Find worker with minimum stops
-        // Iterate to find the first worker with the minimum count
         for (let i = 0; i < this.workerCount; i++) {
             if (counts[i] < minCount) {
                 minCount = counts[i];
@@ -109,16 +93,6 @@ export class SynthClient {
     }
 
     async loadSample(stopId: string, pipePath: string, type: 'partial' | 'full' = 'partial', params?: { maxDuration?: number, cropToLoop?: boolean }): Promise<void> {
-        if (this.isRustEngine) {
-            window.myApi.sendRustCommand({
-                type: 'load-sample',
-                stopId,
-                path: pipePath,
-                maxDuration: params?.maxDuration
-            });
-            return;
-        }
-
         if (!this.isDistributed) {
             return synth.loadSample(stopId, pipePath, type, params);
         }
@@ -146,58 +120,31 @@ export class SynthClient {
         manualId?: string,
         activeTremulants: any[] = [],
         pitchOffsetCents: number = 0,
-        renderingNote?: number,
         delay: number = 0
     ) {
-        // Skip disabled ranks
-        // We need access to the organ store, but SynthClient is a singleton service.
-        // We can import the store here, but we need to use it inside the method or init.
-        // Ideally SynthClient shouldn't depend on Pinia, but for practicality in this architecture:
-
-        // Optimization: For tight loops, we might want to cache the set of disabled stops in SynthClient 
-        // updated via a method call from the store's watcher. But accessing the store directly is easier.
-        // Let's rely on the store being available globally or passed in.
-
-        // Actually, importing the store directly in a service file works in Quasar/Vue3 if Pinia is active.
-        // But circular dependency might be an issue (Store imports Client, Client imports Store).
-        // Better: OrganStore should filter the `stopId` BEFORE calling `synth.noteOn`.
-
-        // HOWEVER, `organ.ts` uses `this.organData.stops[stopId]` often. 
-        // Let's refactor `organ.ts` `playPipe` to check `this.enabledStopIds.has(stopId)`.
-
-        // Wait, the plan said "SynthClient only assigns stops belonging to enabled ranks".
-        // But `noteOn` is per voice.
-
-        if (this.isRustEngine) {
-            // Trigger background full load if in Quick mode
-            if (this.loadingMode === 'quick') {
-                window.myApi.sendRustCommand({
-                    type: 'load-sample',
-                    stopId,
-                    path: pipePath,
-                }); // No maxDuration = full
-            }
-
-            window.myApi.sendRustCommand({
-                type: 'note-on',
-                note,
-                stopId,
-                path: pipePath,
-                releasePath,
-                gainDb,
-                isPedal,
-                volume,
-                tuning,
-                harmonicNumber,
-                pitchOffsetCents,
-                renderingNote,
-                delay
-            });
-            return;
+        // 1. Calculate Gain (Linear)
+        const linearGain = Math.pow(10, gainDb / 20);
+        let pedalScale = 1.0;
+        if (isPedal) {
+            pedalScale = Math.max(0, 1.0 - (note - 36) * (1.0 / 24));
+            if (pedalScale > 1) pedalScale = 1.0; // Clamp
         }
+        const finalGain = (volume / 100) * linearGain * pedalScale;
+
+        // 2. Calculate Pitch Offset (Cents)
+        console.log(note, pipePath, harmonicNumber)
+        const harmonicCents = 1200 * Math.log2(harmonicNumber / 8);
+        // Combine tuning, harmonic shift, and explicit offset
+        const finalPitchOffset = tuning + harmonicCents + pitchOffsetCents;
 
         if (!this.isDistributed) {
-            synth.noteOn(note, stopId, pipePath, releasePath, volume, gainDb, tuning, harmonicNumber, isPedal, manualId, activeTremulants, pitchOffsetCents, renderingNote, delay);
+            // If local (non-distributed, unlikely in this setup), call simplified signature?
+            // Existing synth.noteOn still expects old signature unless specific overloaded.
+            // For now, let's keep calling old synth.noteOn if we fallback to main process synth?
+            // But synth.ts will be updated to new signature? 
+            // Yes, I must update synth-engine.ts signature too. 
+            // So here call with new signature logic.
+            synth.noteOn(note, stopId, pipePath, releasePath, finalGain, finalPitchOffset, delay);
             return;
         }
 
@@ -208,25 +155,15 @@ export class SynthClient {
             stopId,
             pipePath,
             releasePath,
-            volume,
-            gainDb,
-            tuning,
-            harmonicNumber,
-            isPedal,
+            gain: finalGain,
+            pitchOffset: finalPitchOffset,
+            delay,
             manualId,
-            activeTremulants,
-            pitchOffsetCents,
-            renderingNote,
-            delay
+            activeTremulants
         });
     }
 
     noteOff(note: number, stopId: string) {
-        if (this.isRustEngine) {
-            window.myApi.sendRustCommand({ type: 'note-off', note, stopId });
-            return;
-        }
-
         if (!this.isDistributed) {
             synth.noteOff(note, stopId);
             return;
@@ -242,11 +179,6 @@ export class SynthClient {
     setGlobalGain(db: number) {
         this.cachedGlobalGain = db;
 
-        if (this.isRustEngine) {
-            window.myApi.sendRustCommand({ type: 'set-global-gain', db });
-            return;
-        }
-
         if (!this.isDistributed) {
             synth.setGlobalGain(db);
             return;
@@ -260,15 +192,12 @@ export class SynthClient {
         }
     }
 
-    // ... Other methods pass-through or broadcast
-
     markStopSelected(stopId: string) {
         if (!this.isDistributed) {
             synth.markStopSelected(stopId);
             return;
         }
-        // Workers don't strictly need to know this unless we optimize memory there
-        // But let's keep track locally or broadcast if needed
+        // Optional: notify worker logic
     }
 
     markStopDeselected(stopId: string) {
@@ -276,8 +205,6 @@ export class SynthClient {
             synth.markStopDeselected(stopId);
             return;
         }
-        const worker = this.getWorkerForStop(stopId);
-        // Maybe tell worker to unload?
     }
 
     updateTremulants(allActiveTremulants: any[]) {
@@ -295,10 +222,6 @@ export class SynthClient {
 
     setReleaseMode(mode: 'authentic' | 'convolution' | 'none') {
         this.cachedReleaseMode = mode;
-        if (this.isRustEngine) {
-            window.myApi.sendRustCommand({ type: 'set-release-mode', mode });
-            return;
-        }
 
         if (!this.isDistributed) {
             synth.setReleaseMode(mode);
@@ -314,15 +237,12 @@ export class SynthClient {
 
     setLoadingMode(mode: 'none' | 'quick' | 'full') {
         this.loadingMode = mode;
-        if (this.isRustEngine) {
-            window.myApi.sendRustCommand({ type: 'set-loading-mode', mode });
-            return;
-        }
-
         if (!this.isDistributed) {
             synth.setLoadingMode(mode);
             return;
         }
+
+        // Broadcast to all workers 
         for (let i = 0; i < this.workerCount; i++) {
             window.myApi.sendWorkerCommand(i, {
                 type: 'set-loading-mode',
@@ -347,9 +267,6 @@ export class SynthClient {
     }
 
     async unload() {
-        if (this.isRustEngine) {
-            await window.myApi.killRustEngine();
-        }
         if (this.isDistributed) {
             await window.myApi.createWorkers(0);
         }
@@ -359,8 +276,6 @@ export class SynthClient {
         if (!this.isDistributed) {
             return synth.getStats();
         }
-        // Ideally we aggregate stats from workers via IPC request/response.
-        // For now, return placeholders or last known stats.
         return {
             activeStops: Object.keys(this.stopToWorker).length,
             partialSamples: 0,

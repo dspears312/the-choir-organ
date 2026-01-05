@@ -280,13 +280,13 @@ export const useOrganStore = defineStore('organ', {
                 this.currentCombination = [...this.currentCombination, stopId];
                 synth.markStopSelected(stopId);
                 this.activeMidiNotes.forEach(note => {
-                    this.playPipe(note, stopId);
+                    this.triggerPipe(note, stopId, true, 64);
                 });
             } else {
                 this.currentCombination = this.currentCombination.filter(id => id !== stopId);
                 synth.markStopDeselected(stopId);
                 this.activeMidiNotes.forEach(note => {
-                    synth.noteOff(note, stopId);
+                    this.triggerPipe(note, stopId, false, 0);
                 });
             }
 
@@ -320,7 +320,7 @@ export const useOrganStore = defineStore('organ', {
             this.currentCombination.forEach(stopId => {
                 synth.markStopDeselected(stopId);
                 this.activeMidiNotes.forEach(note => {
-                    synth.noteOff(note, stopId);
+                    this.triggerPipe(note, stopId, false, 0);
                 });
             });
 
@@ -662,7 +662,10 @@ export const useOrganStore = defineStore('organ', {
             const type = status & 0xf0;
             console.log(`[MIDI] Event: Status = ${status}, Note = ${note}, Velocity = ${velocity}, Type = ${type} `);
 
-            if (type === 144 && velocity > 0) { // Note On
+            const isNoteOn = (type === 144 && velocity > 0);
+            const isNoteOff = (type === 128 || (type === 144 && velocity === 0));
+
+            if (isNoteOn) {
                 this.activeMidiNotes.add(note);
                 if (this.isRecording) {
                     this.currentRecordingEvents.push({
@@ -673,12 +676,11 @@ export const useOrganStore = defineStore('organ', {
                     });
                 }
                 if (this.isSynthEnabled) {
-                    // Fire all stop playbacks in parallel
                     this.currentCombination.forEach((stopId) => {
-                        this.playPipe(note, stopId);
+                        this.triggerPipe(note, stopId, true, velocity);
                     });
                 }
-            } else if (type === 128 || (type === 144 && velocity === 0)) { // Note Off
+            } else if (isNoteOff) {
                 this.activeMidiNotes.delete(note);
                 if (this.isRecording) {
                     this.currentRecordingEvents.push({
@@ -690,13 +692,13 @@ export const useOrganStore = defineStore('organ', {
                 }
                 if (this.isSynthEnabled) {
                     this.currentCombination.forEach(stopId => {
-                        synth.noteOff(note, stopId);
+                        this.triggerPipe(note, stopId, false, 0);
                     });
                 }
             }
         },
 
-        async playPipe(note: number, stopId: string) {
+        async triggerPipe(note: number, stopId: string, isOn: boolean, velocity: number) {
             let actualStopId = stopId;
             let pitchShift = 0;
             let harmonicMultiplier = 1;
@@ -712,10 +714,15 @@ export const useOrganStore = defineStore('organ', {
                 noteOffset = vs.noteOffset || 0;
             }
 
+            const adjustedNote = note + noteOffset;
+
+            if (!isOn) {
+                synth.noteOff(adjustedNote, stopId);
+                return;
+            }
+
             const stop = this.organData.stops[actualStopId];
             if (!stop) return;
-
-            const adjustedNote = note + noteOffset;
 
             // Fire all ranks in parallel
             stop.rankIds.forEach(async (rankId: string) => {
@@ -742,23 +749,21 @@ export const useOrganStore = defineStore('organ', {
                             return;
                         }
 
-                        // note is the original key (for release tracking)
-                        // adjustedNote is the target pitch base
-                        // Don't await here, let synth.noteOn handle its own wait and global throttle
+                        // Pass adjustedNote as the primary note.
+                        // Remove renderingNote argument (previously 13th arg).
                         synth.noteOn(
-                            note,
+                            adjustedNote,
                             stopId,
                             pipe.wavPath,
                             pipe.releasePath,
                             this.stopVolumes[stopId] || 100,
                             combinedGain,
-                            0, // ODF tuning ignored
+                            pipe.tuning || 0,
                             (pipe.harmonicNumber || 1) * harmonicMultiplier,
                             isPedal,
                             manual?.id,
                             activeTremulants,
                             pitchShift,
-                            adjustedNote,
                             vs?.delay || 0
                         );
                     }
@@ -806,7 +811,7 @@ export const useOrganStore = defineStore('organ', {
                 this.currentCombination = this.currentCombination.filter(x => x !== id);
                 synth.markStopDeselected(id);
                 if (this.isSynthEnabled) {
-                    this.activeMidiNotes.forEach(note => synth.noteOff(note, id));
+                    this.activeMidiNotes.forEach(note => this.triggerPipe(note, id, false, 0));
                 }
                 if (this.isRecording) {
                     this.currentRecordingEvents.push({
@@ -821,7 +826,7 @@ export const useOrganStore = defineStore('organ', {
                 if (!this.currentCombination.includes(id)) {
                     this.currentCombination.push(id);
                     synth.markStopSelected(id);
-                    this.activeMidiNotes.forEach(note => this.playPipe(note, id));
+                    this.activeMidiNotes.forEach(note => this.triggerPipe(note, id, true, 64));
                 }
                 if (this.isRecording) {
                     this.currentRecordingEvents.push({
@@ -1186,13 +1191,13 @@ export const useOrganStore = defineStore('organ', {
                 case 'noteOn':
                     if (event.note !== undefined && this.isSynthEnabled) {
                         this.activeMidiNotes.add(event.note);
-                        this.currentCombination.forEach(stopId => this.playPipe(event.note!, stopId));
+                        this.currentCombination.forEach(stopId => this.triggerPipe(event.note!, stopId, true, (event as any).velocity || 64));
                     }
                     break;
                 case 'noteOff':
                     if (event.note !== undefined && this.isSynthEnabled) {
                         this.activeMidiNotes.delete(event.note);
-                        this.currentCombination.forEach(stopId => synth.noteOff(event.note!, stopId));
+                        this.currentCombination.forEach(stopId => this.triggerPipe(event.note!, stopId, false, 0));
                     }
                     break;
                 case 'stopOn':
@@ -1225,7 +1230,7 @@ export const useOrganStore = defineStore('organ', {
             // Kill all sound
             if (this.isSynthEnabled) {
                 this.activeMidiNotes.forEach(note => {
-                    this.currentCombination.forEach(stopId => synth.noteOff(note, stopId));
+                    this.currentCombination.forEach(stopId => this.triggerPipe(note, stopId, false, 0));
                 });
                 this.activeMidiNotes.clear();
             }

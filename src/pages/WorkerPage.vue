@@ -118,16 +118,11 @@ async function handleCommand(cmd: any) {
                 cmd.stopId,
                 cmd.pipePath,
                 cmd.releasePath,
-                cmd.volume,
-                cmd.gainDb,
-                cmd.tuning,
-                cmd.harmonicNumber,
-                cmd.isPedal,
+                cmd.gain,
+                cmd.pitchOffset,
+                cmd.delay,
                 cmd.manualId,
-                cmd.activeTremulants,
-                cmd.pitchOffsetCents,
-                cmd.renderingNote,
-                cmd.delay
+                cmd.activeTremulants
             );
             break;
         case 'note-off':

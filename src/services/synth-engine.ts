@@ -5,16 +5,12 @@ export interface Voice {
     source: AudioBufferSourceNode;
     gain: GainNode;
     releasePath?: string | undefined;
-    volume: number;
-    gainDb: number;
+    baseGain: number; // Replaces volume/gainDb/isPedal logic
     tuning: number; // cents from ODF (usually ignored/broken)
     wavTuning: number; // cents from WAV metadata
-    harmonicNumber: number;
-    isPedal: boolean;
     manualId?: string | undefined;
     basePlaybackRate?: number;
-    pitchOffsetCents: number; // For virtual stop shift
-    renderingNote: number;    // For virtual stop transposition
+    pitchOffset: number; // Combined offset (harmonic + virtual + tuning)
     startTime: number;        // To sync partial -> full swap
 }
 
@@ -70,11 +66,6 @@ export class SynthEngine {
         this.analyser.smoothingTimeConstant = 0.8;
 
         this.updateMasterGain();
-
-        // Routing: 
-        // Voices -> MasterGain
-        // MasterGain -> DryGain -> Analyser
-        // MasterGain -> Convolver -> ReverbGain -> Analyser
 
         this.masterGain.connect(this.dryGain);
         this.dryGain.connect(this.analyser);
@@ -163,7 +154,106 @@ export class SynthEngine {
         this.updateMasterGain();
     }
 
+    async noteOn(
+        note: number,
+        stopId: string,
+        pipePath: string,
+        releasePath: string | undefined,
+        gain: number,
+        pitchOffset: number,
+        delay: number = 0,
+        manualId?: string,
+        activeTremulants: any[] = []
+    ) {
+        if (delay > 0) {
+            setTimeout(() => this.noteOn(note, stopId, pipePath, releasePath, gain, pitchOffset, 0, manualId, activeTremulants), delay);
+            return;
+        }
 
+        const requestKey = `${note}-${stopId}`;
+        this.requestedNotes.add(requestKey);
+
+        const key = `${stopId}-${pipePath}`;
+        let sample = this.buffers[key];
+
+        // On-demand load check
+        if (!sample || (!sample.partial && !sample.full)) {
+            if (!this.loadingTasks[key + '-partial'] && !this.loadingTasks[key + '-full']) {
+                this.loadSample(stopId, pipePath, 'partial', { maxDuration: 0.5 }).then(() => {
+                    if (this.requestedNotes.has(requestKey)) {
+                        this.noteOn(note, stopId, pipePath, releasePath, gain, pitchOffset, 0, manualId, activeTremulants);
+                    }
+                });
+            }
+            return;
+        }
+
+        const buffer = sample.partial || sample.full;
+        if (!buffer) return;
+
+        // Fade existing overlapping voices
+        const existing = this.activeVoices.filter(v => v.note === note && v.stopId === stopId);
+        existing.forEach(v => this.fadeVoice(v, 0.05));
+
+        const source = this.context.createBufferSource();
+        source.buffer = buffer;
+
+        // Tuning Calculation
+        const meta = this.metadata[key];
+        let wavTuning = 0;
+        if (meta && meta.unityNote !== undefined) {
+            wavTuning = (note - meta.unityNote) * 100;
+            if (meta.pitchFraction) wavTuning -= meta.pitchFraction;
+        }
+
+        const totalCents = wavTuning + pitchOffset;
+        if (totalCents !== 0) {
+            source.playbackRate.value = Math.pow(2, totalCents / 1200);
+        }
+        (source as any).basePlaybackRate = source.playbackRate.value;
+
+        const gainNode = this.context.createGain();
+        gainNode.gain.value = gain;
+
+        source.connect(gainNode);
+        gainNode.connect(this.masterGain);
+
+        source.loop = true;
+        if (meta && meta.loops && meta.loops.length > 0) {
+            const l = meta.loops[0];
+            source.loopStart = l.start / buffer.sampleRate;
+            source.loopEnd = l.end / buffer.sampleRate;
+        } else {
+            source.loop = false;
+        }
+
+        source.start(0);
+
+        const voice: Voice = {
+            note,
+            stopId,
+            pipePath,
+            source,
+            gain: gainNode,
+            releasePath,
+            baseGain: gain,
+            tuning: 0,
+            wavTuning,
+            manualId,
+            basePlaybackRate: source.playbackRate.value,
+            pitchOffset,
+            startTime: this.context.currentTime
+        };
+
+        this.activeVoices.push(voice);
+        this.applyTremulantsToVoice(voice, activeTremulants || this.lastActiveTremulants);
+
+        if (sample.status === 'partial') {
+            this.loadSample(stopId, pipePath, 'full').then(() => {
+                this.swapVoiceToFull(voice);
+            });
+        }
+    }
 
     markStopSelected(stopId: string) {
         this.selectedStops.add(stopId);
@@ -264,157 +354,6 @@ export class SynthEngine {
         return this.loadingTasks[taskKey];
     }
 
-    async noteOn(
-        note: number,
-        stopId: string,
-        pipePath: string,
-        releasePath: string | undefined,
-        volume: number,
-        gainDb: number,
-        tuning: number = 0,
-        harmonicNumber: number = 1,
-        isPedal: boolean = false,
-        manualId?: string,
-        activeTremulants: any[] = [],
-        pitchOffsetCents: number = 0,
-        renderingNote?: number,
-        delay: number = 0
-    ) {
-        if (this.context.state === 'suspended') {
-            await this.context.resume();
-        }
-
-        const requestKey = `${note}-${stopId}`;
-        const bufferKey = `${stopId}-${pipePath}`;
-
-        // Cancel any pending unload timer for this specific buffer
-        if (this.unloadTimeouts[bufferKey]) {
-            clearTimeout(this.unloadTimeouts[bufferKey]);
-            delete this.unloadTimeouts[bufferKey];
-        }
-        if (releasePath) {
-            const relKey = `${stopId}-${releasePath}`;
-            if (this.unloadTimeouts[relKey]) {
-                clearTimeout(this.unloadTimeouts[relKey]);
-                delete this.unloadTimeouts[relKey];
-            }
-        }
-
-        this.requestedNotes.add(requestKey);
-
-        const sample = this.buffers[bufferKey];
-        if (!sample || sample.status === 'none') {
-            await this.loadSample(stopId, pipePath, 'partial');
-        }
-
-        // Trigger full load in background if not already present/loading
-        const currentSample = this.buffers[bufferKey];
-        if (currentSample && currentSample.status !== 'full') {
-            this.loadSample(stopId, pipePath, 'full');
-            // Also trigger full load for release if it exists
-            if (releasePath) {
-                this.loadSample(stopId, releasePath, 'full');
-            }
-        }
-
-        if (!this.requestedNotes.has(requestKey)) {
-            return;
-        }
-
-        const buffer = currentSample?.full || currentSample?.partial;
-        const meta = this.metadata[bufferKey];
-
-        if (!buffer) return;
-
-        const source = this.context.createBufferSource();
-        source.buffer = buffer;
-
-        if (meta && meta.loops && meta.loops.length > 0) {
-            const loop = meta.loops[0];
-            if (loop) {
-                const sr = buffer.sampleRate || 44100;
-                source.loop = true;
-                // Clamp loop points to duration to prevent silence on partial buffers
-                source.loopStart = Math.min((loop.start || 0) / sr, buffer.duration - 0.001);
-                source.loopEnd = Math.min((loop.end || buffer.length - 1) / sr, buffer.duration);
-                // Ensure loopStart is before loopEnd
-                if (source.loopStart >= source.loopEnd) {
-                    source.loopStart = 0;
-                }
-            }
-        }
-
-        let wavTuning = 0;
-        const pitchRefNote = renderingNote !== undefined ? renderingNote : note;
-        if (meta && meta.unityNote !== undefined && !isNaN(meta.unityNote) && meta.unityNote > 0 && meta.unityNote < 128) {
-            wavTuning = (pitchRefNote - meta.unityNote) * 100;
-            if (meta.pitchFraction !== undefined && !isNaN(meta.pitchFraction) && meta.pitchFraction !== 0) {
-                const fractionCents = (meta.pitchFraction / 4294967296) * 100;
-                wavTuning -= fractionCents;
-            }
-        }
-
-        const harmonicCents = 1200 * Math.log2(harmonicNumber);
-        // DO NOT USE pipe tuning from ODF. It is broken and will cause heinous audio errors.
-        // We only use the virtual stop pitchOffsetCents.
-        const totalCents = wavTuning + harmonicCents + pitchOffsetCents;
-        if (!isNaN(totalCents) && totalCents !== 0) {
-            source.playbackRate.value = Math.pow(2, totalCents / 1200);
-        }
-
-        const gainNode = this.context.createGain();
-        const linearGain = Math.pow(10, (gainDb || 0) / 20);
-
-        let pedalScale = 1.0;
-        if (isPedal) {
-            pedalScale = Math.max(0, 1.0 - (note - 36) * (1.0 / 24));
-        }
-
-        const finalVolume = (volume / 100) * linearGain * pedalScale;
-        gainNode.gain.value = finalVolume;
-
-        source.connect(gainNode);
-        gainNode.connect(this.masterGain);
-
-        console.log(`[Synth] Note On: Note=${note}, Stop=${stopId}, Pipe=${pipePath}, Gain=${finalVolume}`);
-
-        source.start(this.context.currentTime + (delay / 1000));
-
-        const voice: Voice = {
-            note,
-            stopId,
-            pipePath,
-            source,
-            gain: gainNode,
-            releasePath,
-            volume,
-            gainDb,
-            tuning,
-            wavTuning,
-            harmonicNumber,
-            isPedal,
-            manualId,
-            basePlaybackRate: source.playbackRate.value,
-            pitchOffsetCents,
-            renderingNote: renderingNote ?? note,
-            startTime: this.context.currentTime
-        };
-        this.activeVoices.push(voice);
-
-        // If we started with partial, trigger full load and swap when ready
-        if (currentSample && currentSample.status !== 'full') {
-            this.loadSample(stopId, pipePath, 'full').then(() => {
-                this.swapVoiceToFull(voice);
-            });
-            if (releasePath) {
-                this.loadSample(stopId, releasePath, 'full');
-            }
-        }
-
-        // Apply Tremulants
-        this.applyTremulantsToVoice(voice, activeTremulants);
-    }
-
     private swapVoiceToFull(voice: Voice) {
         // Check if voice is still active and needs swapping
         if (!this.activeVoices.includes(voice)) return;
@@ -447,12 +386,7 @@ export class SynthEngine {
 
         const newGainNode = this.context.createGain();
         // Match current volume
-        const currentTargetGain = (voice.volume / 100) * Math.pow(10, (voice.gainDb || 0) / 20);
-        let pedalScale = 1.0;
-        if (voice.isPedal) {
-            pedalScale = Math.max(0, 1.0 - (voice.note - 36) * (1.0 / 24));
-        }
-        const finalVolume = currentTargetGain * pedalScale;
+        const finalVolume = voice.baseGain;
 
         newGainNode.gain.setValueAtTime(0, now);
         newGainNode.gain.linearRampToValueAtTime(finalVolume, now + crossfadeTime);
@@ -505,12 +439,8 @@ export class SynthEngine {
 
             // Amplitude Modulation
             const lfoGain = this.context.createGain();
-            const baseGain = (voice.volume / 100) * Math.pow(10, (voice.gainDb || 0) / 20);
-            let pedalScale = 1.0;
-            if (voice.isPedal) {
-                pedalScale = Math.max(0, 1.0 - (voice.note - 36) * (1.0 / 24));
-            }
-            lfoGain.gain.value = baseGain * pedalScale * (ampDepth / 100);
+            const baseGain = voice.baseGain;
+            lfoGain.gain.value = baseGain * (ampDepth / 100);
 
             lfo.connect(lfoGain);
             lfoGain.connect(voice.gain.gain);
@@ -643,22 +573,14 @@ export class SynthEngine {
                 const relSource = this.context.createBufferSource();
                 relSource.buffer = relBuffer;
 
-                const harmonicCents = 1200 * Math.log2(voice.harmonicNumber);
                 // Use stored virtual offsets for release too
-                const totalCents = (voice.wavTuning || 0) + harmonicCents + (voice.pitchOffsetCents || 0);
+                const totalCents = (voice.wavTuning || 0) + (voice.pitchOffset || 0);
                 if (!isNaN(totalCents) && totalCents !== 0) {
                     relSource.playbackRate.value = Math.pow(2, totalCents / 1200);
                 }
 
                 const relGain = this.context.createGain();
-                const linearGain = Math.pow(10, (voice.gainDb || 0) / 20);
-
-                let pedalScale = 1.0;
-                if (voice.isPedal) {
-                    pedalScale = Math.max(0, 1.0 - (voice.note - 36) * (1.0 / 24));
-                }
-
-                const targetVolume = (voice.volume / 100) * linearGain * pedalScale;
+                const targetVolume = voice.baseGain;
 
                 relGain.gain.setValueAtTime(0, now);
                 relGain.gain.linearRampToValueAtTime(targetVolume, now + crossfadeTime);

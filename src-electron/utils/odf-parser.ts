@@ -151,6 +151,15 @@ export function parseODF(filePath: string): OrganData {
 
   const basePath = path.dirname(filePath);
 
+  // Helper to get property case-insensitively from a section
+  function getProp(sec: any, key: string): string | undefined {
+    if (!sec) return undefined;
+    if (sec[key] !== undefined) return sec[key];
+    const lower = key.toLowerCase();
+    const realKey = Object.keys(sec).find(k => k.toLowerCase() === lower);
+    return realKey ? sec[realKey] : undefined;
+  };
+
   const organData: OrganData = {
     name: parsed.Organ?.Name || parsed.Organ?.ChurchName || parsed.Organ?.Church || parsed.Organ?.['Organ Info'] || 'Unknown Organ',
     globalGain: parseGain(parsed.Organ || {}),
@@ -160,7 +169,6 @@ export function parseODF(filePath: string): OrganData {
     tremulants: {},
     screens: [],
     basePath,
-
     sourcePath: filePath
   };
 
@@ -386,7 +394,7 @@ export function parseODF(filePath: string): OrganData {
       const rank = parsed[key];
       const pipes: OrganPipe[] = [];
 
-      const firstMidiNote = parseInt(rank.FirstMidiNoteNumber || '36');
+      const firstMidiNote = parseInt(getProp(rank, 'FirstMidiNoteNumber') || '36');
 
       for (let i = 1; i <= 128; i++) {
         const pipeKeyStr = i.toString().padStart(3, '0');
@@ -405,13 +413,13 @@ export function parseODF(filePath: string): OrganData {
           }
 
           const pipeGain = parseGain(rank, pipeKey);
-          // Tuning from rank or pipe (summing Tuning and Correction)
-          const rankTuning = parseFloat(rank.PitchTuning || '0') + parseFloat(rank.PitchCorrection || '0');
-          const pipeTuning = parseFloat(rank[`${pipeKey}PitchTuning`] || '0') + parseFloat(rank[`${pipeKey}PitchCorrection`] || '0');
+          // Tuning from rank or pipe (summing Tuning and Correction) - case insensitive
+          const rankTuning = parseFloat(getProp(rank, 'PitchTuning') || '0') + parseFloat(getProp(rank, 'PitchCorrection') || '0');
+          const pipeTuning = parseFloat(getProp(rank, `${pipeKey}PitchTuning`) || '0') + parseFloat(getProp(rank, `${pipeKey}PitchCorrection`) || '0');
           const totalTuning = rankTuning + pipeTuning;
 
-          const rankHarmonic = parseFloat(rank.HarmonicNumber || '1');
-          const pipeHarmonic = parseFloat(rank[`${pipeKey}HarmonicNumber`] || rankHarmonic.toString());
+          const rankHarmonic = parseFloat(getProp(rank, 'HarmonicNumber') || '1');
+          const pipeHarmonic = parseFloat(getProp(rank, `${pipeKey}HarmonicNumber`) || rankHarmonic.toString());
 
           const normalizedPath = rawPath.replace(/\\/g, '/');
 
@@ -424,7 +432,8 @@ export function parseODF(filePath: string): OrganData {
             }
           }
 
-          const midiNoteOverride = rank[`${pipeKey}MIDIKeyNumber`] ? parseInt(rank[`${pipeKey}MIDIKeyNumber`].toString()) : NaN;
+          const midiNoteOverrideStr = getProp(rank, `${pipeKey}MIDIKeyNumber`);
+          const midiNoteOverride = midiNoteOverrideStr ? parseInt(midiNoteOverrideStr) : NaN;
 
           pipes.push({
             pitch: i.toString(),
@@ -433,7 +442,7 @@ export function parseODF(filePath: string): OrganData {
             midiNote: !isNaN(midiNoteOverride) ? midiNoteOverride : (firstMidiNote - 1) + i,
             gain: pipeGain,
             tuning: totalTuning,
-            harmonicNumber: pipeHarmonic
+            harmonicNumber: pipeHarmonic * 8
           });
         }
       }
