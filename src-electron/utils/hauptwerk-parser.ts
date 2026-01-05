@@ -334,7 +334,7 @@ export function parseHauptwerk(filePath: string): OrganData {
                     // Alternate Layout Coordinates
                     // Layout 1: l (x), m (y), q (Alt ImageSet ID)
                     // Layout 2: r (x), s (y)
-                    const layouts: { [index: number]: { x: number, y: number, imageOff?: string, imageOn?: string } } = {};
+                    const layouts: { [index: number]: { x: number, y: number, width?: number, height?: number, imageOff?: string, imageOn?: string } } = {};
 
                     if (isi.l && isi.m) {
                         layouts[1] = {
@@ -386,10 +386,11 @@ export function parseHauptwerk(filePath: string): OrganData {
                             // Layout 1 = Widest (Landscape)
                             // Layout 2 = Tallest (Portrait)
                             let targetLayout = -1; // Default to None
+                            let dims: any = null;
 
                             if (imgOffPath || imgOnPath) {
                                 try {
-                                    const dims = getImageDimensions(imgOffPath || imgOnPath || '');
+                                    dims = getImageDimensions(imgOffPath || imgOnPath || '');
                                     if (dims) {
                                         if (dims.height > dims.width) {
                                             targetLayout = 2; // Portrait Image -> Apply to Portrait Layout
@@ -415,6 +416,12 @@ export function parseHauptwerk(filePath: string): OrganData {
 
                                 if (imgOffPath) layouts[idx].imageOff = imgOffPath;
                                 if (imgOnPath) layouts[idx].imageOn = imgOnPath;
+
+                                // If we have dimensions for this alternate image, store them too
+                                if (dims) {
+                                    layouts[idx].width = dims.width;
+                                    layouts[idx].height = dims.height;
+                                }
 
                                 // Fallbacks
                                 if (!layouts[idx].imageOff && altImageSet.j) {

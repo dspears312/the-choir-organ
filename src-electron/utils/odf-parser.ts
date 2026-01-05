@@ -65,7 +65,7 @@ export interface OrganScreenElement {
   mouseRect?: { x: number, y: number, w: number, h: number } | undefined;
 
   // Alternate Layouts (Index 1, 2, etc.)
-  layouts?: { [index: number]: { x: number, y: number, imageOff?: string, imageOn?: string } } | undefined;
+  layouts?: { [index: number]: { x: number, y: number, width?: number, height?: number, imageOff?: string, imageOn?: string } } | undefined;
 }
 
 export interface OrganScreenData {

@@ -67,12 +67,9 @@ function getElementStyle(element: OrganScreenElement) {
         if (layout) {
             x = layout.x;
             y = layout.y;
-            // Height/Width might not be in layout, use default or scale?
-            // Usually alternate layout only changes position X/Y.
-            // But if we want to support resizing, we need W/H in layout interface.
-            // Currently parser only sends X/Y.
-            w = element.width;
-            h = element.height;
+            // Use layout width/height if available
+            if (layout.width !== undefined) w = layout.width;
+            if (layout.height !== undefined) h = layout.height;
         } else if (element.isBackground) {
             // Fallback for background: maintain visibility at default coords
             x = element.x;
@@ -157,8 +154,20 @@ function updateScale() {
 
     checkBestLayout(containerWidth / containerHeight);
 
-    const widthRatio = containerWidth / props.screen.width;
-    const heightRatio = containerHeight / props.screen.height;
+    // Use current layout dimensions for scale calculation
+    let screenW = props.screen.width;
+    let screenH = props.screen.height;
+
+    if (activeLayoutIndex.value > 0 && props.screen.alternateLayouts) {
+        const altLayout = props.screen.alternateLayouts[activeLayoutIndex.value];
+        if (altLayout) {
+            screenW = altLayout.width;
+            screenH = altLayout.height;
+        }
+    }
+
+    const widthRatio = containerWidth / screenW;
+    const heightRatio = containerHeight / screenH;
 
     // Scale to fit (contain)
     scale.value = Math.min(widthRatio, heightRatio);
