@@ -802,10 +802,32 @@ ipcMain.handle('delete-organ-files', async (event, filePath: string) => {
 
     return { success: true };
   } catch (e: any) {
-    console.error('Delete organ error:', e);
+    console.error('Delete organ files error:', e);
     return { error: e.message };
   }
 });
+
+ipcMain.handle('delete-organ-cache', async (event, odfPath: string) => {
+  try {
+    // We need to import deleteOrganCache from persistence
+    const { deleteOrganCache } = await import('./utils/persistence');
+    return deleteOrganCache(odfPath);
+  } catch (e) {
+    console.error('delete-organ-cache error:', e);
+    return false;
+  }
+});
+
+ipcMain.handle('delete-organ-save', async (event, odfPath: string) => {
+  try {
+    const { deleteOrganSave } = await import('./utils/persistence');
+    return deleteOrganSave(odfPath);
+  } catch (e) {
+    console.error('delete-organ-save error:', e);
+    return false;
+  }
+});
+
 
 ipcMain.handle('format-volume', async (event, { path: folderPath, label }) => {
   const info: any = await getDiskInfo(folderPath);

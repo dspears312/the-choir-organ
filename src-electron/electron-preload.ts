@@ -40,6 +40,8 @@ contextBridge.exposeInMainWorld('myApi', {
     removeFromRecent: (path: string) => ipcRenderer.invoke('remove-from-recent', path),
     calculateOrganSize: (path: string) => ipcRenderer.invoke('calculate-organ-size', path),
     deleteOrganFiles: (path: string) => ipcRenderer.invoke('delete-organ-files', path),
+    deleteOrganCache: (path: string) => ipcRenderer.invoke('delete-organ-cache', path),
+    deleteOrganSave: (path: string) => ipcRenderer.invoke('delete-organ-save', path),
 
     loadUserSettings: () => ipcRenderer.invoke('load-user-settings'),
     saveUserSettings: (settings: any) => ipcRenderer.invoke('save-user-settings', settings),

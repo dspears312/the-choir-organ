@@ -151,3 +151,31 @@ export function removeFromRecent(filePath: string) {
     saveSettings({ recentOdfs: recents });
 }
 
+export function deleteOrganCache(odfPath: string) {
+    try {
+        const p = getOrganCachePath(odfPath);
+        if (fs.existsSync(p)) {
+            fs.unlinkSync(p);
+            console.log(`[Persistence] Deleted organ cache for ${odfPath}`);
+            return true;
+        }
+    } catch (e) {
+        console.error(`Failed to delete organ cache for ${odfPath}`, e);
+    }
+    return false;
+}
+
+export function deleteOrganSave(odfPath: string) {
+    try {
+        const p = getOrganStatePath(odfPath);
+        if (fs.existsSync(p)) {
+            fs.unlinkSync(p);
+            console.log(`[Persistence] Deleted organ save state for ${odfPath}`);
+            return true;
+        }
+    } catch (e) {
+        console.error(`Failed to delete organ save state for ${odfPath}`, e);
+    }
+    return false;
+}
+

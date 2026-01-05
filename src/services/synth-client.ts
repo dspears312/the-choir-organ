@@ -92,6 +92,29 @@ export class SynthClient {
         return worker;
     }
 
+    async loadSampleBatch(samples: Array<{ stopId: string, pipePath: string, type: 'partial' | 'full', params?: any }>): Promise<void> {
+        if (!this.isDistributed) {
+            return synth.loadSampleBatch(samples);
+        }
+
+        // Group by worker
+        const workerBatches: Record<number, typeof samples> = {};
+
+        samples.forEach(s => {
+            const worker = this.getWorkerForStop(s.stopId);
+            if (!workerBatches[worker]) workerBatches[worker] = [];
+            workerBatches[worker].push(s);
+        });
+
+        // Send commands
+        Object.entries(workerBatches).forEach(([workerIndex, batch]) => {
+            window.myApi.sendWorkerCommand(Number(workerIndex), {
+                type: 'load-sample-batch',
+                samples: batch
+            });
+        });
+    }
+
     async loadSample(stopId: string, pipePath: string, type: 'partial' | 'full' = 'partial', params?: { maxDuration?: number, cropToLoop?: boolean }): Promise<void> {
         if (!this.isDistributed) {
             return synth.loadSample(stopId, pipePath, type, params);

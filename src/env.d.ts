@@ -37,6 +37,8 @@ export interface IElectronAPI {
   removeFromRecent: (path: string) => Promise<void>;
   calculateOrganSize: (path: string) => Promise<any>;
   deleteOrganFiles: (path: string) => Promise<any>;
+  deleteOrganCache: (path: string) => Promise<boolean>;
+  deleteOrganSave: (path: string) => Promise<boolean>;
   triggerGC: () => Promise<void>;
 
   // Remote Control

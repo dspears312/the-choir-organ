@@ -102,6 +102,22 @@ async function handleCommand(cmd: any) {
     }
 
     switch (cmd.type) {
+        case 'load-sample-batch':
+            try {
+                // Map command structure to engine structure
+                const batch = cmd.samples.map((s: any) => ({
+                    stopId: s.stopId,
+                    pipePath: s.pipePath,
+                    type: s.loadType || s.type, // Handle potential naming diff
+                    params: s.params
+                }));
+                await synth.loadSampleBatch(batch);
+                // Send batch acknowledgement
+                window.myApi.sendSampleLoaded({ pipePath: 'BATCH', count: batch.length });
+            } catch (e) {
+                log(`Error loading batch: ${e}`);
+            }
+            break;
         case 'load-sample':
             // log(`Loading sample: ${cmd.pipePath} (Type: ${cmd.loadType}, Params: ${JSON.stringify(cmd.params)})`);
             try {

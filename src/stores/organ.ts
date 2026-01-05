@@ -348,6 +348,10 @@ export const useOrganStore = defineStore('organ', {
         async setLoadingMode(mode: 'none' | 'quick' | 'full') {
             this.audioSettings.loadingMode = mode;
             this.saveInternalState();
+
+            if (mode !== 'none') {
+                await this.triggerPreload(mode);
+            }
         },
 
         async setReverbSettings(length: number, mix: number) {
@@ -380,8 +384,11 @@ export const useOrganStore = defineStore('organ', {
         },
 
         async triggerPreload(mode: 'quick' | 'full') {
-            if (!this.organData) return;
-            const stops = this.enabledStopIds; // Set of strings
+            if (!this.organData) {
+                console.error('No organ data to preload.');
+                return;
+            };
+            const stops = new Set(Object.keys(this.organData.stops));
             console.log(`[OrganStore] Triggering ${mode} preload for ${stops.size} stops...`);
 
             this.isLoadingOrgan = true; // Use this to show spinner/progress
@@ -428,31 +435,33 @@ export const useOrganStore = defineStore('organ', {
             this.setupSampleLoadListener();
 
             // 2. Dispatch Loads
-            const CHUNK_SIZE = 10; // Pipes per tick
+            // 2. Dispatch Loads
+            const CHUNK_SIZE = 50; // Pipes per tick (Batched)
             for (let i = 0; i < pipesToLoad.length; i += CHUNK_SIZE) {
                 const chunk = pipesToLoad.slice(i, i + CHUNK_SIZE);
-                chunk.forEach(item => {
-                    const path = item.isRelease ? item.pipe.releasePath : item.pipe.wavPath;
 
+                const batch = chunk.map(item => {
+                    const path = item.isRelease ? item.pipe.releasePath : item.pipe.wavPath;
                     if (mode === 'quick') {
-                        // Quick mode handles main sample only?
-                        // Actually if we want quick releases? 500ms release?
-                        // Let's assume loading main 1s is enough for quick.
-                        // But if we pushed it to list, we should load it.
-                        // Partial load release too.
-                        synth.loadSample(item.stopId, path, 'partial', { maxDuration: 1.0 });
+                        return {
+                            stopId: item.stopId,
+                            pipePath: path,
+                            type: 'partial' as const,
+                            params: { maxDuration: 1.0 }
+                        };
                     } else {
                         const crop = this.audioSettings.releaseMode !== 'authentic';
-                        // If it is a release sample, never crop loop (it has no loop).
-                        // If it is main sample, crop if not authentic.
-                        // Wait, if authentic mode is ON, we load main (full) + release (full/partial?).
-                        // If authentic mode is OFF (Convolution), we load main (cropped).
-
                         const shouldCrop = !item.isRelease && crop;
-                        synth.loadSample(item.stopId, path, 'full', { cropToLoop: shouldCrop });
+                        return {
+                            stopId: item.stopId,
+                            pipePath: path,
+                            type: 'full' as const,
+                            params: { cropToLoop: shouldCrop }
+                        };
                     }
                 });
 
+                await synth.loadSampleBatch(batch);
                 await new Promise(r => setTimeout(r, 10)); // Yield to UI
             }
 

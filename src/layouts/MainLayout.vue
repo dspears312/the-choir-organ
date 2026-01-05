@@ -65,14 +65,9 @@
         :render-progress="exportStore.renderProgress" :is-rendering-export="exportStore.isRendering"
         :render-status="exportStore.renderStatus" />
       <TsunamiExportManager v-else-if="uiStore.activeDrawer === 'export'" />
-      <SettingsManager v-else-if="uiStore.activeDrawer === 'settings'" @open-advanced="showAudioSettings = true" />
+      <SettingsManager v-else-if="uiStore.activeDrawer === 'settings'" />
       <DebugDrawerContent v-else-if="uiStore.activeDrawer === 'debug'" />
     </q-drawer>
-
-    <q-dialog :model-value="showAudioSettings" maximized @update:model-value="showAudioSettings = $event">
-      <SharedAudioSettingsDialog :model-value="showAudioSettings" :organ-path="(route.query.file as string)"
-        @apply="onAudioSettingsApplied" @update:model-value="showAudioSettings = $event" />
-    </q-dialog>
 
     <HelpDialog v-model="showHelp" />
     <WalkthroughDrawer />
@@ -98,7 +93,6 @@ import RecordingManager from 'src/components/RecordingManager.vue';
 import TsunamiExportManager from 'src/components/TsunamiExportManager.vue';
 import SettingsManager from 'src/components/SettingsManager.vue';
 import DebugDrawerContent from 'src/components/DebugDrawerContent.vue';
-import SharedAudioSettingsDialog from 'src/components/SharedAudioSettingsDialog.vue';
 
 import { Dark } from 'quasar';
 
@@ -141,22 +135,6 @@ function toggleRecording() {
     uiStore.openDrawer('recordings');
   } else {
     organStore.startRecording();
-  }
-}
-
-async function onAudioSettingsApplied(newState: any) {
-  organStore.audioSettings = newState;
-  try {
-    await organStore.setReleaseMode(organStore.audioSettings.releaseMode);
-    await organStore.setLoadingMode(organStore.audioSettings.loadingMode);
-    await organStore.setReverbSettings(organStore.audioSettings.reverbLength, organStore.audioSettings.reverbMix);
-    await organStore.saveInternalState();
-    const file = route.query.file as string;
-    if (file) await organStore.startOrgan(file);
-  } catch (e) {
-    console.error(e);
-  } finally {
-    showAudioSettings.value = false;
   }
 }
 

@@ -73,6 +73,22 @@
                                 @click="handleRemoveList" align="left" class="full-width"
                                 hint="Removes this item from the recent list. Files remain on disk." />
 
+                            <q-separator dark />
+
+                            <div class="text-caption text-grey-5">Troubleshooting</div>
+                            <div class="row q-col-gutter-sm">
+                                <div class="col-6">
+                                    <q-btn outline color="amber-9" label="Clear Cache" icon="mdi-cached"
+                                        @click="handleClearCache" align="left" class="full-width" size="sm" />
+                                </div>
+                                <div class="col-6">
+                                    <q-btn outline color="orange-9" label="Clear Save Data" icon="mdi-restore"
+                                        @click="handleClearSave" align="left" class="full-width" size="sm" />
+                                </div>
+                            </div>
+
+                            <q-separator dark />
+
                             <q-btn outline color="negative" label="Delete from Disk" icon="mdi-delete-forever"
                                 @click="handleDeleteDisk" align="left" class="full-width" />
                         </div>
@@ -126,10 +142,6 @@
                             </q-item-section>
                             <q-item-section side>
                                 <div class="row q-gutter-x-xs">
-                                    <q-btn flat round color="grey-6" icon="mdi-cog"
-                                        @click.stop="openSettingsDialog(file)">
-                                        <q-tooltip>Configure Audio & Ranks</q-tooltip>
-                                    </q-btn>
                                     <q-btn flat round color="grey-5" icon="mdi-dots-vertical"
                                         @click.stop="openManagementDialog(file)" />
                                 </div>
@@ -145,9 +157,6 @@
                     </div>
                 </div>
             </div>
-            <!-- Shared Audio Settings -->
-            <SharedAudioSettingsDialog v-model="showAudioSettings" :organ-path="selectedSettingsOrgan"
-                @apply="applyAudioSettings" />
         </div>
     </q-page>
 </template>
@@ -157,27 +166,14 @@ import { ref, onMounted, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useOrganStore } from 'src/stores/organ';
 import { useQuasar } from 'quasar';
-import SharedAudioSettingsDialog from 'src/components/SharedAudioSettingsDialog.vue';
-
 const organStore = useOrganStore();
 const router = useRouter();
 const slide = ref(0);
 const $q = useQuasar();
 
 const isInfoDialogVisible = ref(false);
-const showAudioSettings = ref(false);
 const selectedOrgan = ref<{ path: string; name: string; size: string | null } | null>(null);
-const selectedSettingsOrgan = ref('');
 const isCalculating = ref(false);
-
-async function applyAudioSettings(settings: AudioSettings) {
-    let state = await window.myApi.loadOrganState(selectedSettingsOrgan.value);
-    console.log(settings);
-    console.log(selectedSettingsOrgan.value)
-    state.audioSettings = settings;
-    console.log(state)
-    await window.myApi.saveOrganState(selectedSettingsOrgan.value, JSON.parse(JSON.stringify(state)));
-}
 
 function getDisplayName(path: string) {
     if (!path || typeof path !== 'string') return '';
@@ -218,9 +214,40 @@ async function openManagementDialog(file: string) {
     }
 }
 
-function openSettingsDialog(file: string) {
-    selectedSettingsOrgan.value = file;
-    showAudioSettings.value = true;
+async function handleClearCache() {
+    if (!selectedOrgan.value) return;
+    isCalculating.value = true;
+    try {
+        const result = await window.myApi.deleteOrganCache(selectedOrgan.value.path);
+        if (result) {
+            $q.notify({ type: 'positive', message: 'Cache cleared successfully' });
+        } else {
+            $q.notify({ type: 'negative', message: 'Failed to clear cache' });
+        }
+    } finally {
+        isCalculating.value = false;
+    }
+}
+
+async function handleClearSave() {
+    if (!selectedOrgan.value) return;
+
+    const path = selectedOrgan.value.path;
+    $q.dialog({
+        title: 'Clear Organ Save Data?',
+        message: `This will reset all combinations, virtual stops, and volume settings for <b>${getDisplayName(path)}</b>.`,
+        html: true,
+        dark: true,
+        ok: { label: 'Clear Data', color: 'orange-9', flat: true },
+        cancel: { label: 'Cancel', color: 'white', flat: true }
+    }).onOk(async () => {
+        const result = await window.myApi.deleteOrganSave(path);
+        if (result) {
+            $q.notify({ type: 'positive', message: 'Save data cleared' });
+        } else {
+            $q.notify({ type: 'negative', message: 'Failed to clear save data' });
+        }
+    });
 }
 
 function handleRemoveList() {

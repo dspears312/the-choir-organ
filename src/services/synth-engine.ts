@@ -164,6 +164,20 @@ export class SynthEngine {
         this.selectedStops.add(stopId);
     }
 
+    async loadSampleBatch(samples: Array<{ stopId: string, pipePath: string, type: 'partial' | 'full', params?: any }>): Promise<void> {
+        // Deduplicate requests
+        const unique = new Map<string, typeof samples[0]>();
+        samples.forEach(s => {
+            const key = `${s.stopId}-${s.pipePath}`;
+            if (!unique.has(key)) {
+                unique.set(key, s);
+            }
+        });
+
+        const promises = Array.from(unique.values()).map(s => this.loadSample(s.stopId, s.pipePath, s.type, s.params));
+        await Promise.all(promises);
+    }
+
     async loadSample(stopId: string, pipePath: string, type: 'partial' | 'full' = 'partial', params?: { maxDuration?: number, cropToLoop?: boolean }): Promise<void> {
         if (!pipePath) {
             console.warn('No pipe path provided for sample load');
@@ -176,14 +190,9 @@ export class SynthEngine {
         }
 
         const sample = this.buffers[key];
-        if (type === 'full' && sample.status === 'full') {
-            console.warn('Sample already loaded');
-            return
-        };
-        if (type === 'partial' && (sample.status === 'partial' || sample.status === 'full')) {
-            console.warn('Sample already loaded');
-            return;
-        };
+        // Silent return if already loaded to avoid log spam
+        if (type === 'full' && sample.status === 'full') return;
+        if (type === 'partial' && (sample.status === 'partial' || sample.status === 'full')) return;
 
         // Include params in task key to allow concurrent loading of different versions if needed (unlikely but safe)
         // actually standard 'full' should overwrite any special full load?
