@@ -21,6 +21,18 @@
               <div v-else>MIDI Disconnected. Click to retry connection.</div>
             </q-tooltip>
           </div>
+
+          <!-- Virtual Keyboard Toggle -->
+          <div class="status-indicator row items-center q-gutter-x-xs cursor-pointer hover-opacity-100"
+            @click="uiStore.showVirtualKeyboard = !uiStore.showVirtualKeyboard"
+            :class="{ 'opacity-50': !uiStore.showVirtualKeyboard }">
+            <q-icon :name="uiStore.showVirtualKeyboard ? 'mdi-keyboard' : 'mdi-keyboard-outline'"
+              :color="uiStore.showVirtualKeyboard ? 'amber' : 'grey-7'" size="16px" />
+            <span class="text-caption text-uppercase tracking-wide">Keys</span>
+            <q-tooltip class="bg-grey-10 text-amber shadow-4">
+              Toggle Virtual Keyboard
+            </q-tooltip>
+          </div>
         </div>
       </div>
     </Teleport>
@@ -141,7 +153,7 @@
                 <div class="text-h4 text-amber-8 font-cinzel q-mb-xs">Real-time Note Monitor</div>
                 <div class="text-caption text-grey-7" v-if="folderPath">
                   Monitoring: <span class="text-amber">{{ bankNames[selectedBank] || `Bank ${selectedBank}`
-                    }}</span>
+                  }}</span>
                   <span class="q-ml-sm opacity-50">(On-Demand Loading)</span>
                 </div>
               </div>
@@ -179,6 +191,12 @@
         </q-scroll-area>
       </div>
     </div>
+
+    <!-- Virtual Keyboard Area -->
+    <div v-if="uiStore.showVirtualKeyboard"
+      class="keyboard-tray row justify-center bg-grey-10 q-py-sm border-top-amber shadow-up-24">
+      <VirtualKeyboard />
+    </div>
   </q-page>
 </template>
 
@@ -186,11 +204,14 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import { useOrganStore } from 'src/stores/organ';
 import { useExportStore } from 'src/stores/export';
+import { useUIStore } from 'src/stores/ui';
 import { tsunamiPlayer } from 'src/services/tsunami-player';
+import VirtualKeyboard from 'src/components/VirtualKeyboard.vue';
 import { useRoute } from 'vue-router';
 
 const organStore = useOrganStore();
 const exportStore = useExportStore();
+const uiStore = useUIStore();
 const route = useRoute();
 
 const folderPath = ref('');
@@ -565,5 +586,12 @@ onUnmounted(() => {
   to {
     opacity: 1;
   }
+}
+
+.keyboard-tray {
+  flex: 0 0 auto;
+  border-top: 1px solid #443322;
+  box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.5);
+  z-index: 100;
 }
 </style>

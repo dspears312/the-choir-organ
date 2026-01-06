@@ -8,6 +8,7 @@ export const useSettingsStore = defineStore('settings', () => {
     const workerCount = ref<number>(1);
     const isWebServerEnabled = ref<boolean>(false);
     const remoteServerPort = ref<number>(56789);
+    const showVirtualKeyboard = ref<boolean>(false);
 
     // Actions
     async function loadSettings() {
@@ -18,6 +19,7 @@ export const useSettingsStore = defineStore('settings', () => {
             workerCount.value = settings.workerCount || 1;
             isWebServerEnabled.value = settings.isWebServerEnabled || false;
             remoteServerPort.value = settings.remoteServerPort || 56789;
+            showVirtualKeyboard.value = settings.showVirtualKeyboard || false;
         }
     }
 
@@ -26,7 +28,8 @@ export const useSettingsStore = defineStore('settings', () => {
         lastExportDir: string,
         workerCount: number,
         isWebServerEnabled: boolean,
-        remoteServerPort: number
+        remoteServerPort: number,
+        showVirtualKeyboard: boolean
     }>) {
         // Optimistic update
         if (newSettings.recentOdfs) recentOdfs.value = newSettings.recentOdfs;
@@ -34,6 +37,7 @@ export const useSettingsStore = defineStore('settings', () => {
         if (newSettings.workerCount) workerCount.value = newSettings.workerCount;
         if (newSettings.isWebServerEnabled !== undefined) isWebServerEnabled.value = newSettings.isWebServerEnabled;
         if (newSettings.remoteServerPort) remoteServerPort.value = newSettings.remoteServerPort;
+        if (newSettings.showVirtualKeyboard !== undefined) showVirtualKeyboard.value = newSettings.showVirtualKeyboard;
 
         // Use JSON copy to ensure we send a plain object, stripping Proxies
         await window.myApi.saveUserSettings(JSON.parse(JSON.stringify({
@@ -41,7 +45,8 @@ export const useSettingsStore = defineStore('settings', () => {
             lastExportDir: lastExportDir.value,
             workerCount: workerCount.value,
             isWebServerEnabled: isWebServerEnabled.value,
-            remoteServerPort: remoteServerPort.value
+            remoteServerPort: remoteServerPort.value,
+            showVirtualKeyboard: showVirtualKeyboard.value
         })));
     }
 
@@ -58,6 +63,7 @@ export const useSettingsStore = defineStore('settings', () => {
         workerCount,
         isWebServerEnabled,
         remoteServerPort,
+        showVirtualKeyboard,
         loadSettings,
         saveSettings,
         setWorkerCount

@@ -116,7 +116,13 @@ const close = () => (window as any).myApi?.close();
 const drawerWidth = ref(300);
 const isFullscreen = ref(false);
 
+import { useSettingsStore } from 'src/stores/settings';
+
+const settingsStore = useSettingsStore();
+
 onMounted(async () => {
+  await settingsStore.loadSettings();
+
   if ((window as any).myApi?.getAppVersion) {
     appVersion.value = await (window as any).myApi.getAppVersion();
   }

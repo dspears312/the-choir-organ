@@ -1,13 +1,13 @@
 <template>
-    <div class="column full-height">
+    <div>
         <!-- Header -->
-        <div class="q-pa-md bg-header-gradient border-bottom-amber row items-center no-wrap">
-            <q-icon name="bug_report" color="red-5" size="sm" class="q-mr-sm" />
+        <div class="q-pa-md bg-header-gradient border-bottom-amber row items-center">
+            <q-icon name="mdi-bug" color="red-5" size="sm" class="q-mr-sm" />
             <div class="text-h6 font-cinzel text-red-5 ellipsis">Debug Inspector</div>
         </div>
 
         <!-- Content -->
-        <div class="col q-pa-sm scroll">
+        <div class="q-pa-sm">
             <div v-if="!organStore.organData" class="text-grey-5 q-pa-md text-center">
                 No organ loaded.
             </div>

@@ -6,28 +6,14 @@
             <div class="row no-wrap items-center full-width">
                 <!-- <q-btn flat round icon="arrow_back" color="grey-6" @click="goBack" class="q-mr-md" /> -->
                 <div class="row items-center q-gutter-x-sm col justify-end">
-                    <!-- MIDI Status -->
-                    <div class="status-indicator row items-center q-gutter-x-sm cursor-pointer hover-opacity-100"
-                        @click="organStore.initMIDI" :class="{ 'opacity-50': organStore.midiStatus !== 'Connected' }">
-                        <q-icon name="mdi-circle" :color="midiColor" size="12px" />
-                        <span class="text-caption text-uppercase tracking-wide">MIDI</span>
-                        <q-tooltip class="bg-grey-10 text-amber shadow-4">
-                            <div v-if="organStore.midiStatus === 'Connected'">MIDI Connected & Ready ({{
-                                organStore.midiStatus }})</div>
-                            <div v-else-if="organStore.midiStatus === 'Error'">
-                                <strong>MIDI Error:</strong> {{ organStore.midiError || 'Unknown Error' }}<br />
-                                Click to retry connection
-                            </div>
-                            <div v-else>MIDI Disconnected. Click to retry connection.</div>
-                        </q-tooltip>
-                    </div>
+                    <!-- Drawer Toggles -->
 
                     <!-- <q-separator vertical color="grey-9" dark class="q-mx-sm" /> -->
 
                     <!-- Right Side: Drawer Toggles -->
                     <div class="row no-wrap items-center toolbar-btn-group">
 
-                        <q-separator vertical dark class="q-mx-sm opacity-20" inset />
+                        <!-- <q-separator vertical dark class="q-mx-sm opacity-20" inset /> -->
 
                         <div class="row no-wrap q-gutter-x-sm">
                             <q-btn v-for="tab in drawerTabs" :key="tab.id" flat dense
@@ -55,7 +41,7 @@
 
                 <!-- Left Area: Tabs for Basic or Organ Screens -->
                 <div class="col column no-wrap">
-                    <div class="row items-center justify-around bg-grey-10 text-amber">
+                    <div class="row items-center justify-around bg-grey-10 text-amber shadow-4" style="z-index: 10">
                         <span class="font-cinzel text-grey-6 text-shadow q-mx-md"
                             style="height: 36px; line-height: 36px; font-size: 18px">{{
                                 organStore.organData?.name }}
@@ -73,8 +59,8 @@
                         style="background: transparent;">
                         <!-- Basic Grid View -->
                         <q-tab-panel name="basic" class="q-pa-none overflow-hidden">
-                            <q-scroll-area id="stops-container" style="height: 100%" class="col q-pa-md">
-                                <div v-for="manual in sortedManuals" :key="manual.id" class="col-12 q-mb-md">
+                            <q-scroll-area id="stops-container" style="height: 100%" class="col">
+                                <div v-for="manual in sortedManuals" :key="manual.id" class="col-12 q-ma-md">
                                     <div class="manual-section q-pa-md">
                                         <div
                                             class="manual-name font-cinzel text-h6 text-amber-7 q-mb-lg text-center border-bottom-amber">
@@ -136,7 +122,7 @@
 
                         <!-- Organ Screen Views -->
                         <q-tab-panel v-for="screen in organStore.organData?.screens" :key="screen.id" :name="screen.id"
-                            class="q-pa-sm overflow-hidden" style="display: flex;">
+                            class="q-pa-none overflow-hidden" style="display: flex;">
                             <!-- <q-scroll-area style="height: 100%; width: 100%;"> -->
                             <!-- <div class="flex flex-center q-pa-md" style="min-height: 100%"> -->
                             <OrganScreen :screen="screen" auto-switch-layout />
@@ -144,6 +130,50 @@
                             <!-- </q-scroll-area> -->
                         </q-tab-panel>
                     </q-tab-panels>
+                </div>
+            </div>
+
+            <!-- Virtual Keyboard -->
+            <div v-if="uiStore.showVirtualKeyboard" class="keyboard-tray bg-grey-10 shadow-up-10">
+                <VirtualKeyboard />
+            </div>
+
+            <!-- Status Bar -->
+            <div class="status-bar row items-center no-wrap bg-grey-10 q-px-md text-grey-5 border-top-amber"
+                :class="{ 'shadow-up-4': !uiStore.showVirtualKeyboard }">
+                <div class="row items-center q-gutter-x-md">
+                    <!-- MIDI Status -->
+                    <div class="status-item row items-center q-gutter-x-sm cursor-pointer hover-opacity-90"
+                        @click="organStore.initMIDI" :class="{ 'text-grey-7': organStore.midiStatus !== 'Connected' }">
+                        <q-icon name="mdi-circle" :color="midiColor" size="10px" />
+                        <span class="text-xs text-uppercase tracking-wider">MIDI</span>
+                        <q-tooltip class="bg-grey-10 text-amber shadow-4">
+                            <div v-if="organStore.midiStatus === 'Connected'">MIDI Connected & Ready</div>
+                            <div v-else-if="organStore.midiStatus === 'Error'">
+                                <strong>MIDI Error:</strong> {{ organStore.midiError || 'Unknown Error' }}
+                            </div>
+                            <div v-else>MIDI Disconnected. Click to retry.</div>
+                        </q-tooltip>
+                    </div>
+
+                    <q-separator vertical />
+
+                    <!-- RAM Usage -->
+                    <div class="status-item row items-center q-gutter-x-sm">
+                        <q-icon name="mdi-memory" :style="{ color: ramColor }" size="18px" />
+                        <span class="text-xs font-mono">RAM: {{ formattedRam }} ({{ organStore.workerCount }})</span>
+                        <q-tooltip class="bg-grey-10 text-amber">Active RAM Usage (Total Workers)</q-tooltip>
+                    </div>
+                </div>
+
+                <q-space />
+
+                <div class="row items-center q-gutter-x-sm">
+                    <!-- Virtual Keyboard Toggle -->
+                    <q-btn flat dense no-caps class="status-toggle-btn"
+                        :color="uiStore.showVirtualKeyboard ? 'amber' : 'grey-7'"
+                        @click="uiStore.showVirtualKeyboard = !uiStore.showVirtualKeyboard" icon="mdi-piano"
+                        label="Virtual Keyboard" />
                 </div>
             </div>
         </div>
@@ -175,6 +205,7 @@ import { useExportStore } from 'src/stores/export';
 import { useUIStore } from 'src/stores/ui';
 import Drawknob from 'src/components/Drawknob.vue';
 import OrganScreen from 'src/components/OrganScreen.vue';
+import VirtualKeyboard from 'src/components/VirtualKeyboard.vue';
 import { parseStopLabel } from 'src/utils/label-parser';
 import { useQuasar } from 'quasar';
 
@@ -538,6 +569,36 @@ onUnmounted(() => {
 
     100% {
         opacity: 1;
+    }
+}
+
+.keyboard-tray {
+    flex: 0 0 auto;
+    // border-top: 1px solid #443322;
+    // box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.5);
+    z-index: 100;
+    width: 100%;
+    overflow: hidden;
+}
+
+.status-bar {
+    height: 28px;
+    z-index: 110;
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.status-item {
+    transition: all 0.2s ease;
+    height: 100%;
+}
+
+.status-toggle-btn {
+    opacity: 0.8;
+    transition: all 0.2s ease;
+
+    &:hover {
+        opacity: 1;
+        background: rgba(255, 255, 255, 0.05);
     }
 }
 </style>

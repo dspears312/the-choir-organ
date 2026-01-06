@@ -351,7 +351,7 @@ function stopDrag() {
     height: 100%;
     position: relative;
     overflow: hidden;
-    background-color: #111;
+    // background-color: #111;
 }
 
 .organ-screen-scaler {

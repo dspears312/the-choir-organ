@@ -64,6 +64,7 @@ export const useOrganStore = defineStore('organ', {
         pendingLoadCount: 0,
         totalPreloadCount: 0,
         sampleLoadListener: null as (() => void) | null,
+        workerStatsListener: null as (() => void) | null,
         sampleProgressPollingInterval: null as any,
         drivePollInterval: null as any,
 
@@ -173,8 +174,13 @@ export const useOrganStore = defineStore('organ', {
             // await this.stopOrgan();
 
             const settingsStore = useSettingsStore();
+            await settingsStore.loadSettings();
             const workerCount = Math.max(1, settingsStore.workerCount);
             console.log(`[OrganStore] Initializing ${workerCount} workers...`);
+
+            this.workerCount = workerCount;
+            this.workerStats = {};
+            this.initWorkerStats();
 
             // 2. Refresh workers
             await synth.init(workerCount);
@@ -496,8 +502,6 @@ export const useOrganStore = defineStore('organ', {
                     console.log(`[MIDI] Adding listener to input: ${input.name} (id: ${input.id})`);
                     input.addEventListener('midimessage', boundListener);
                 });
-
-                this.initWorkerStats();
             }).catch((err) => {
                 this.midiStatus = 'Error';
                 this.midiError = err.message || 'Failed to access MIDI devices.';
@@ -575,7 +579,8 @@ export const useOrganStore = defineStore('organ', {
         },
 
         initWorkerStats() {
-            window.myApi.onWorkerStats((event: any, payload: { workerIndex: number, stats: any }) => {
+            if (this.workerStatsListener) return;
+            this.workerStatsListener = window.myApi.onWorkerStats((event: any, payload: { workerIndex: number, stats: any }) => {
                 this.workerStats[payload.workerIndex] = payload.stats;
             });
         },
