@@ -56,6 +56,67 @@
                 </div>
             </div>
 
+            <!-- Advanced Options -->
+            <div class="q-px-xs q-mb-md border-amber-muted q-pa-sm rounded-borders">
+                <div class="text-caption text-amber-8 q-mb-sm">Advanced Rendering Options</div>
+
+                <q-select v-model="exportStore.stretchStrategy" :options="[
+                    { label: 'No Stretching', value: 'none' },
+                    { label: 'Octave Shift (Standard)', value: 'octave' },
+                    { label: 'Highest Note (Single)', value: 'highest_note' },
+                    { label: 'Highest Notes (Spread)', value: 'highest_notes' }
+                ]" label="Stretch Strategy" dark dense outlined map-options emit-value color="amber" class="q-mb-md">
+                    <template v-slot:append>
+                        <q-icon name="mdi-arrow-expand-vertical" color="amber" size="xs" />
+                    </template>
+                </q-select>
+
+                <div class="row q-col-gutter-sm q-mb-sm">
+                    <div class="col-6">
+                        <q-input v-model.number="exportStore.targetCapacityGB" label="Target Size" type="number" dark
+                            dense outlined color="amber" suffix="GB" />
+                    </div>
+                    <div class="col-6">
+                        <q-input v-model.number="exportStore.minDurationVal" label="Minimum Duration" type="number" dark
+                            dense outlined color="amber" suffix="seconds" placeholder="Auto" />
+                    </div>
+                    <!-- <div class="col-4">
+                        <q-input v-model.number="exportStore.maxDurationVal" label="Max Duration" type="number" dark
+                            dense outlined color="amber" suffix="s" placeholder="Auto" />
+                    </div> -->
+                </div>
+
+                <div class="q-mb-sm">
+                    <div class="row justify-between text-xs text-grey-5 q-mb-xs">
+                        <span>Bass</span>
+                        <span>Balanced</span>
+                        <span>Treble</span>
+                    </div>
+                    <q-slider v-model="exportStore.durationSkew" :min="-1.0" :max="1.0" :step="0.1" color="amber" dark
+                        label :label-value="exportStore.durationSkew.toFixed(1)" />
+                </div>
+
+                <!-- Preview Table -->
+                <div class="bg-black-50 q-pa-sm rounded-borders text-xs font-mono">
+                    <div class="row text-grey-6 q-mb-xs border-bottom-amber">
+                        <div class="col-2">Note</div>
+                        <div class="col text-right">Duration</div>
+                    </div>
+                    <div v-for="note in previewNotes" :key="note.name" class="row text-white">
+                        <div class="col-2 text-amber">{{ note.name }}</div>
+                        <div class="col text-right">{{ note.duration }}s</div>
+                    </div>
+                    <div class="row text-grey-5 q-mt-xs border-top-amber q-pt-xs">
+                        <div class="col-4">Total Est:</div>
+                        <div class="col text-right text-amber">{{ totalEstimatedSize }} GB</div>
+                    </div>
+                    <div v-if="parseFloat(totalEstimatedSize) > exportStore.targetCapacityGB"
+                        class="text-warning text-xs q-mt-xs text-right">
+                        ⚠️ Exceeds Target (Due to Min Constraints)
+                    </div>
+                </div>
+            </div>
+
             <!-- Burn Button -->
             <q-btn id="btn-burn-card" color="red-10"
                 :label="exportStore.isOutputRemovable ? 'Burn to Card' : 'Copy to Folder'"
@@ -193,6 +254,148 @@ const handleFormatAndRender = async () => {
         console.error('Format failed', e);
     }
 };
+// Calculation constants
+const SAMPLE_RATE = 44100;
+const BIT_DEPTH = 16;
+const CHANNELS = 2; // Stereo
+const BYTES_PER_SECOND = SAMPLE_RATE * (BIT_DEPTH / 8) * CHANNELS;
+
+import { computed, watch } from 'vue';
+
+const calculateDurations = () => {
+    // Manufacturers use Decimal GB (1000^3), not GiB (1024^3).
+    const totalGB = exportStore.targetCapacityGB;
+    const totalBytes = totalGB * 1000 * 1000 * 1000;
+
+    // File System Overhead Calculation
+    const numBanks = Math.max(1, organStore.banks.length);
+    const notesPerBank = 61;
+    const totalFiles = numBanks * notesPerBank;
+
+    // 1. Global FS Overhead (FAT tables, directory structures) - Est 100MB
+    const fsOverhead = 100 * 1000 * 1000;
+
+    // 2. Per-File Overhead 
+    // - WAV Header with 'smpl' chunk ~ 1KB
+    // - Cluster Overhang (Space wasted at end of file) ~ 32KB - 128KB depending on formatting
+    // Let's be safe and reserve 256KB per file.
+    const perFileOverhead = 256 * 1000;
+    const totalFileOverhead = totalFiles * perFileOverhead;
+
+    // Usable Audio PCM Data Space
+    const usableBytes = totalBytes - fsOverhead - totalFileOverhead;
+
+    // Safety buffer (1%)
+    const safeUsableBytes = usableBytes * 0.99;
+
+    const bytesPerBank = safeUsableBytes / numBanks;
+
+    // Based on skew, distribute bytes across 61 notes (36 to 96)
+    // Skew < 0: favour low notes (index 0). Skew > 0: favour high notes (index 60)
+    // Base weight = 1.0. 
+    // If skew is -1.0, note 0 has weight 2.0, note 60 has weight 0.0?
+    // Let's use a power curve or linear slope.
+
+    const weights: number[] = [];
+    for (let i = 0; i < notesPerBank; i++) {
+        let w = 1.0;
+        const normalizedPos = i / (notesPerBank - 1); // 0.0 to 1.0
+
+        if (exportStore.durationSkew < 0) {
+            // Favor low notes. 
+            // -1.0 => low notes get more. 
+            // e.g. lerp(1, 0.2, normalizedPos) for skew -1
+            const strength = Math.abs(exportStore.durationSkew);
+            w = 1.0 + (strength * (1.0 - normalizedPos)) - (strength * normalizedPos);
+        } else {
+            // Favor high notes
+            const strength = exportStore.durationSkew;
+            w = 1.0 - (strength * (1.0 - normalizedPos)) + (strength * normalizedPos);
+        }
+        weights.push(Math.max(0.1, w));
+    }
+
+    const totalWeight = weights.reduce((a, b) => a + b, 0);
+    const baseBytesPerUnit = bytesPerBank / totalWeight;
+
+    const durationsMs: number[] = weights.map(w => {
+        const bytes = w * baseBytesPerUnit;
+        return (bytes / BYTES_PER_SECOND) * 1000;
+    });
+
+    // Apply Constraints
+    const minMs = (exportStore.minDurationVal || 0) * 1000;
+
+    const clampedDurations = durationsMs.map(d => {
+        let val = d;
+        if (minMs > 0 && val < minMs) val = minMs;
+        return val;
+    });
+
+    // Store in store for export use
+    (exportStore as any).calculatedDurations = clampedDurations;
+    return clampedDurations;
+};
+
+const previewNotes = computed(() => {
+    const durations = calculateDurations();
+    const targets = [
+        { note: 36, name: 'C2' },
+        { note: 48, name: 'C3' },
+        { note: 60, name: 'C4' }, // Middle C
+        { note: 72, name: 'C5' },
+        { note: 84, name: 'C6' },
+        { note: 96, name: 'C7' },
+    ];
+
+    return targets.map(t => {
+        const idx = t.note - 36;
+        const dur = durations[idx] || 0;
+        return {
+            name: t.name,
+            duration: (dur / 1000).toFixed(1)
+        };
+    });
+});
+
+const totalEstimatedSize = computed(() => {
+    const calculatedIds = (exportStore as any).calculatedDurations || [];
+    if (calculatedIds.length === 0) return '0.00';
+
+    // Sum bytes
+    const numBanks = Math.max(1, organStore.banks.length);
+    const notesPerBank = 61;
+    const totalFiles = numBanks * notesPerBank;
+
+    let totalPcmBytes = 0;
+    calculatedIds.forEach((ms: number) => {
+        const bytes = (ms / 1000) * BYTES_PER_SECOND;
+        totalPcmBytes += bytes;
+    });
+    totalPcmBytes *= numBanks;
+
+    // Add back the excluded overheads for the estimate
+    const fsOverhead = 100 * 1000 * 1000;
+    const perFileOverhead = 256 * 1000;
+    const totalFileOverhead = totalFiles * perFileOverhead;
+
+    // We are estimating the USED space, so we include the PCM + Header/Slack + FS tables
+    const totalProjectedUsage = totalPcmBytes + totalFileOverhead + fsOverhead;
+
+    // Return in GB (Decimal)
+    return (totalProjectedUsage / (1000 * 1000 * 1000)).toFixed(2);
+});
+
+// Watch for store changes to recalculate
+watch(() => [
+    exportStore.targetCapacityGB,
+    exportStore.durationSkew,
+    exportStore.minDurationVal,
+    organStore.banks.length
+], () => {
+    calculateDurations();
+}, { immediate: true });
+
 </script>
 
 <style scoped>
@@ -202,6 +405,14 @@ const handleFormatAndRender = async () => {
 
 .border-bottom-amber {
     border-bottom: 1px solid rgba(212, 175, 55, 0.3);
+}
+
+.border-top-amber {
+    border-top: 1px solid rgba(212, 175, 55, 0.3);
+}
+
+.text-warning {
+    color: #ffd600;
 }
 
 .drive-item {

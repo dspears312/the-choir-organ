@@ -22,9 +22,12 @@ export function getExtractedOrgansDir(): string {
 /**
  * Handles extraction of RAR archives using a Worker thread.
  */
-export async function handleRarExtraction(filePaths: string[], mainWindow: BrowserWindow): Promise<string | null> {
+export async function handleRarExtraction(filePaths: string[], mainWindow: BrowserWindow): Promise<string[]> {
     const extractedDir = getExtractedOrgansDir();
-    const primaries = filePaths.filter(p => p.toLowerCase().endsWith('.rar'));
+    const primaries = filePaths.filter(p => {
+        const lower = p.toLowerCase();
+        return lower.endsWith('.rar') || lower.endsWith('.comppkg_hauptwerk_rar') || lower.endsWith('_rar');
+    });
 
     const wasmPath = findWasmPath();
     if (!wasmPath || !fs.existsSync(wasmPath)) {
@@ -91,7 +94,7 @@ export async function handleRarExtraction(filePaths: string[], mainWindow: Brows
         }
     }
 
-    return allFoundOdfs.length > 0 ? (allFoundOdfs[0] || null) : null;
+    return allFoundOdfs;
 }
 
 async function extractInWorker(primary: string, targetDir: string, wasmBinary: ArrayBuffer, onMessage: (msg: any) => void): Promise<void> {

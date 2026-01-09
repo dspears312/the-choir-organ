@@ -16,6 +16,7 @@ export interface RenderPipe {
     manualId?: string;
     renderingNote?: number; // For virtual stop transposition
     delay?: number; // in ms
+    releasePath?: string;
 }
 
 export async function renderNote(
@@ -24,10 +25,14 @@ export async function renderNote(
     outputDir: string,
     trackNumber: number,
     globalGainDb: number,
-    activeTremulants: any[] = []
+    activeTremulants: any[] = [],
+    wavCache?: Map<string, any>,
+    durationMs?: number // Total file duration target
 ) {
     const sampleRate = 44100;
-    const totalSamples = sampleRate * 60;
+    // Use the custom duration if provided, otherwise default to 60s
+    const targetSeconds = durationMs ? (durationMs / 1000) : 60;
+    const totalSamples = Math.ceil(sampleRate * targetSeconds);
     const outputBuffer = [new Float32Array(totalSamples), new Float32Array(totalSamples)];
 
     const globalGainLinear = Math.pow(10, (globalGainDb || 0) / 20);
@@ -36,10 +41,33 @@ export async function renderNote(
 
     for (const pipe of pipes) {
         try {
-            const wavInfo = readWav(pipe.path);
+            // 1. Load Main Sample
+            let wavInfo;
+            if (wavCache && wavCache.has(pipe.path)) {
+                wavInfo = wavCache.get(pipe.path);
+            } else {
+                wavInfo = readWav(pipe.path);
+                if (wavCache && wavInfo.data && wavInfo.data.length > 0) {
+                    wavCache.set(pipe.path, wavInfo);
+                }
+            }
+
             if (!wavInfo.data || wavInfo.data.length === 0) {
                 console.warn(`No data for pipe: ${pipe.path}`);
                 continue;
+            }
+
+            // 2. Load Release Sample (if exists)
+            let relInfo = null;
+            if (pipe.releasePath) {
+                if (wavCache && wavCache.has(pipe.releasePath)) {
+                    relInfo = wavCache.get(pipe.releasePath);
+                } else {
+                    relInfo = readWav(pipe.releasePath);
+                    if (wavCache && relInfo.data && relInfo.data.length > 0) {
+                        wavCache.set(pipe.releasePath, relInfo);
+                    }
+                }
             }
 
             const stopVolumeScale = pipe.volume / 100;
@@ -61,7 +89,6 @@ export async function renderNote(
             }
 
             const harmonicCents = 1200 * Math.log2(pipe.harmonicNumber / 8);
-            // We ignore pipe.tuning as per user instruction and use virtual pitchOffsetCents
             const totalCents = (pipe.pitchOffsetCents || 0) + wavTuningPercent + harmonicCents;
             const pitchRate = isNaN(totalCents) ? 1.0 : Math.pow(2, totalCents / 1200);
 
@@ -74,10 +101,43 @@ export async function renderNote(
             }
 
             const finalScale = stopVolumeScale * odfGainLinear * (FIXED_ATTENUATION * masterAttenuation) * pedalScale;
-
             const tremulantsForPipe = activeTremulants.filter(t => !t.manualId || String(t.manualId) === String(pipe.manualId));
 
-            layerSample(outputBuffer, wavInfo, finalScale, playbackRate, tremulantsForPipe, pipe.delay || 0);
+            // 3. Calculate Split Logic
+            // We need to fit strictly within targetSeconds.
+            // If we have a release, we subtract its length from the end.
+
+            let attackDurationMs = targetSeconds * 1000;
+            let releaseStartMs = attackDurationMs;
+            let releaseDurationMs = 0;
+
+            if (relInfo && relInfo.data && relInfo.data[0]) {
+                const relSamples = relInfo.data[0].length;
+                const relRate = relInfo.sampleRate || 44100;
+                // Adjust release length for playback rate? 
+                // Usually releases are pitch shifted same as main.
+                const effectiveRelSeconds = (relSamples / relRate) / playbackRate;
+
+                // Heuristic: Don't let release take more than 50% of the file
+                const maxRelSeconds = targetSeconds * 0.5;
+                const actualRelSeconds = Math.min(effectiveRelSeconds, maxRelSeconds);
+
+                releaseDurationMs = actualRelSeconds * 1000;
+                attackDurationMs = (targetSeconds * 1000) - releaseDurationMs;
+                releaseStartMs = attackDurationMs;
+            }
+
+            // 4. Mix Main Sample (Attack/Hold)
+            // Crossfade 50ms
+            const crossfadeS = 0.05;
+
+            mixSample(outputBuffer, wavInfo, 0, attackDurationMs + (crossfadeS * 1000), finalScale, playbackRate, tremulantsForPipe, pipe.delay || 0, crossfadeS, 0);
+
+            // 5. Mix Release Sample
+            if (relInfo && releaseDurationMs > 0) {
+                mixSample(outputBuffer, relInfo, releaseStartMs, null, finalScale, playbackRate, tremulantsForPipe, 0, 0, crossfadeS);
+            }
+
             activePipeCount++;
         } catch (e) {
             console.error(`Failed to layer pipe ${pipe.path}:`, e);
@@ -102,21 +162,15 @@ export async function renderNote(
     const wav = new WaveFile();
     wav.fromScratch(2, sampleRate, '16', int16Buffer);
 
-    if (!(wav as any).smpl) {
-        (wav as any).smpl = { loops: [] };
-    }
-    (wav as any).smpl.loops = [{
-        dwIdentifier: 0,
-        dwType: 0,
-        dwStart: 0,
-        dwEnd: totalSamples - 1,
-        dwFraction: 0,
-        dwPlayCount: 0
-    }];
+    // Tsunami does not support loops, so we produce a plain one-shot WAV.
 
-    const fileName = `${trackNumber.toString().padStart(4, '0')}.wav`;
-    const filePath = path.join(outputDir, fileName);
-    fs.writeFileSync(filePath, wav.toBuffer());
+    if (outputDir) {
+        const fileName = `${trackNumber.toString().padStart(4, '0')}.wav`;
+        const filePath = path.join(outputDir, fileName);
+        fs.writeFileSync(filePath, wav.toBuffer());
+    } else {
+        return wav.toBuffer();
+    }
 }
 
 // Wrapper for existing single-note rendering
@@ -162,6 +216,9 @@ export async function renderPerformance(
     const activeTremulants: any[] = [];
 
     const totalEvents = events.length;
+
+    // Simple in-memory cache for this render session
+    const wavCache = new Map<string, any>();
 
     for (let i = 0; i < totalEvents; i++) {
         const event = events[i];
@@ -234,7 +291,16 @@ export async function renderPerformance(
                             };
 
                             try {
-                                const wavInfo = readWav(rp.path);
+                                let wavInfo;
+                                if (wavCache.has(rp.path)) {
+                                    wavInfo = wavCache.get(rp.path);
+                                } else {
+                                    wavInfo = readWav(rp.path);
+                                    if (wavInfo.data && wavInfo.data.length > 0) {
+                                        wavCache.set(rp.path, wavInfo);
+                                    }
+                                }
+
                                 if (!wavInfo.data) return;
 
                                 let wavTuningPercent = 0;
@@ -282,7 +348,14 @@ export async function renderPerformance(
                                     let relPath = (pipe as any).releasePath;
                                     let relInfo = null;
                                     if (relPath) {
-                                        relInfo = readWav(relPath);
+                                        if (wavCache.has(relPath)) {
+                                            relInfo = wavCache.get(relPath);
+                                        } else {
+                                            relInfo = readWav(relPath);
+                                            if (relInfo.data && relInfo.data.length > 0) {
+                                                wavCache.set(relPath, relInfo);
+                                            }
+                                        }
                                     }
 
                                     if (relInfo && relInfo.data) {

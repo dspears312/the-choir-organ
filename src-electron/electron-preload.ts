@@ -213,5 +213,10 @@ contextBridge.exposeInMainWorld('myApi', {
         ipcRenderer.on('devtools-change', listener);
         return () => ipcRenderer.removeListener('devtools-change', listener);
     },
-    isDevToolsOpened: () => ipcRenderer.invoke('is-devtools-opened')
+    isDevToolsOpened: () => ipcRenderer.invoke('is-devtools-opened'),
+    onVirtualMidiMessage: (callback: (event: any, data: { data: number[], timestamp: number }) => void) => {
+        const listener = (event: any, data: any) => callback(event, data);
+        ipcRenderer.on('virtual-midi-message', listener);
+        return () => ipcRenderer.removeListener('virtual-midi-message', listener);
+    }
 });

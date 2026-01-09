@@ -89,6 +89,7 @@ export interface IElectronAPI {
   onWindowStateChanged?: (callback: (state: string) => void) => () => void;
   onDevToolsChange?: (callback: (isOpen: boolean) => void) => () => void;
   isDevToolsOpened?: () => Promise<boolean>;
+  onVirtualMidiMessage: (callback: (event: any, data: { data: number[], timestamp: number }) => void) => () => void;
 }
 
 declare global {

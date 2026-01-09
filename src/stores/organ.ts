@@ -24,6 +24,7 @@ export const useOrganStore = defineStore('organ', {
         extractionFile: '',
         isLoadingOrgan: false,
         midiListener: null as ((event: any) => void) | null,
+        virtualMidiCleanup: null as (() => void) | null,
 
         // MIDI State
         midiStatus: 'Disconnected' as 'Connected' | 'Disconnected' | 'Error',
@@ -40,8 +41,11 @@ export const useOrganStore = defineStore('organ', {
 
         // Playback State
         isPlaying: false,
+        playbackSpeed: 1.0,
         playbackRecordingId: null as string | null,
         playbackStartTime: 0,
+        playbackAccumulatedTime: 0,
+        playbackLastTickTime: 0,
         playbackTimer: null as any,
         playbackEventIndex: 0,
 
@@ -104,25 +108,35 @@ export const useOrganStore = defineStore('organ', {
 
         async installOrgan() {
             let data;
+            this.isLoadingOrgan = false;
             this.isExtracting = false;
             this.extractionProgress = 0;
             this.extractionFile = '';
 
             const startListener = () => {
                 this.isExtracting = true;
+                this.isLoadingOrgan = false;
             };
             const progressListener = (_event: any, data: any) => {
                 this.extractionProgress = data.progress / 100;
                 this.extractionFile = data.file;
             };
 
-            window.myApi.onExtractionStart(startListener);
-            window.myApi.onExtractionProgress(progressListener);
+            const startCleanup = window.myApi.onExtractionStart(startListener);
+            const progressCleanup = window.myApi.onExtractionProgress(progressListener);
 
             try {
                 data = await window.myApi.selectOdfFile();
-                this.isLoadingOrgan = true;
+
+                if (data && data.installed) {
+                    this.isLoadingOrgan = false;
+                } else if (data && !data.error) {
+                    this.isLoadingOrgan = true;
+                    this.organData = data; // Direct load handled here
+                }
             } finally {
+                startCleanup();
+                progressCleanup();
                 this.isExtracting = false;
             }
 
@@ -141,13 +155,43 @@ export const useOrganStore = defineStore('organ', {
                 return;
             }
 
-            this.isLoadingOrgan = true;
-            const data = await window.myApi.selectOdfFile(path);
+            const isArchive = path.toLowerCase().endsWith('.rar') ||
+                path.toLowerCase().endsWith('.comppkg_hauptwerk_rar') ||
+                path.toLowerCase().endsWith('_rar');
 
-            if (!data || data.error) {
-                console.error('Failed to load ODF file:', data.error);
+            this.isLoadingOrgan = !isArchive;
+            this.isExtracting = isArchive;
+            this.extractionProgress = 0;
+
+            const startCleanup = window.myApi.onExtractionStart(() => {
+                this.isExtracting = true;
                 this.isLoadingOrgan = false;
-                return;
+            });
+            const progressCleanup = window.myApi.onExtractionProgress((_event: any, data: any) => {
+                this.extractionProgress = data.progress / 100;
+                this.extractionFile = data.file;
+            });
+
+            let data;
+            try {
+                data = await window.myApi.selectOdfFile(path);
+
+                if (!data || data.error) {
+                    console.error('Failed to load ODF file:', data?.error);
+                    this.isLoadingOrgan = false;
+                    return;
+                }
+
+                if (data.installed) {
+                    console.log('[OrganStore] Archive installed, refreshing recents.');
+                    this.fetchRecents();
+                    this.isLoadingOrgan = false;
+                    return;
+                }
+            } finally {
+                startCleanup();
+                progressCleanup();
+                this.isExtracting = false;
             }
 
             this.organData = data;
@@ -257,6 +301,12 @@ export const useOrganStore = defineStore('organ', {
             this.currentCombination = [];
             this.stopVolumes = {};
             this.virtualStops = [];
+
+            // Reset loading states
+            this.isLoadingOrgan = false;
+            this.isExtracting = false;
+            this.extractionProgress = 0;
+            this.extractionFile = '';
 
             if (this.drivePollInterval) {
                 clearInterval(this.drivePollInterval);
@@ -506,6 +556,17 @@ export const useOrganStore = defineStore('organ', {
                 this.midiStatus = 'Error';
                 this.midiError = err.message || 'Failed to access MIDI devices.';
             });
+
+            // Virtual MIDI
+            if (this.virtualMidiCleanup) this.virtualMidiCleanup();
+            this.virtualMidiCleanup = window.myApi.onVirtualMidiMessage((event, data) => {
+                console.log(`[Virtual MIDI] Received message: ${data.data}`);
+                const midiEvent = {
+                    data: Uint8Array.from(data.data),
+                    receivedTime: data.timestamp
+                };
+                this.handleMIDIMessage(midiEvent);
+            });
         },
 
         initRemoteSync() {
@@ -637,6 +698,7 @@ export const useOrganStore = defineStore('organ', {
                     isRecording: this.isRecording,
                     stopVolumes: this.stopVolumes,
                     isPlaying: this.isPlaying,
+                    playbackSpeed: this.playbackSpeed,
                     playbackRecordingId: this.playbackRecordingId
                 }));
                 window.myApi.updateRemoteState(cleanState);
@@ -656,6 +718,11 @@ export const useOrganStore = defineStore('organ', {
                 this.midiListener = null;
                 this.midiAccess.onstatechange = null;
                 this.midiAccess = null;
+            }
+            if (this.virtualMidiCleanup) {
+                console.log('[MIDI] Cleaning up virtual MIDI listener...');
+                this.virtualMidiCleanup();
+                this.virtualMidiCleanup = null;
             }
             this.midiStatus = 'Disconnected';
             this.midiError = '';
@@ -1157,7 +1224,12 @@ export const useOrganStore = defineStore('organ', {
 
             this.isPlaying = true;
             this.playbackRecordingId = recordingId;
-            this.playbackStartTime = performance.now();
+
+            // Delta-based timing initialization
+            this.playbackStartTime = performance.now(); // Keep for reference if needed
+            this.playbackLastTickTime = performance.now();
+            this.playbackAccumulatedTime = 0;
+
             this.playbackEventIndex = 0;
             this.syncRemoteState();
 
@@ -1165,11 +1237,16 @@ export const useOrganStore = defineStore('organ', {
                 if (!this.isPlaying || this.playbackRecordingId !== recordingId) return;
 
                 const now = performance.now();
-                const elapsed = now - this.playbackStartTime;
+                const delta = now - this.playbackLastTickTime;
+                this.playbackLastTickTime = now;
+
+                // Accumulate time based on speed
+                this.playbackAccumulatedTime += delta * this.playbackSpeed;
 
                 while (this.playbackEventIndex < recording.events.length) {
                     const event = recording.events[this.playbackEventIndex];
-                    if (!event || event.timestamp > elapsed) break;
+                    // Compare event timestamp against our speed-adjusted accumulated time
+                    if (!event || event.timestamp > this.playbackAccumulatedTime) break;
 
                     this.dispatchPlaybackEvent(event);
                     this.playbackEventIndex++;

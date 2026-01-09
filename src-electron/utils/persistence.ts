@@ -48,20 +48,34 @@ export function loadOrganCache(odfPath: string): any | null {
     return null;
 }
 
+interface WindowState {
+    x?: number;
+    y?: number;
+    width: number;
+    height: number;
+    isMaximized: boolean;
+}
+
 interface UserSettings {
     recentOdfs: string[];
     lastExportDir: string;
     workerCount: number;
     isWebServerEnabled?: boolean;
     remoteServerPort?: number;
+    windowState?: WindowState;
 }
 
-const DEFAULT_SETTINGS: UserSettings = {
+export const DEFAULT_SETTINGS: UserSettings = {
     recentOdfs: [],
     lastExportDir: '',
     workerCount: 1,
     isWebServerEnabled: false,
-    remoteServerPort: 56789
+    remoteServerPort: 56789,
+    windowState: {
+        width: 1200,
+        height: 800,
+        isMaximized: false
+    }
 };
 
 function getSettingsPath(): string {

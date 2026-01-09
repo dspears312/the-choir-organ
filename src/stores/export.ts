@@ -15,7 +15,11 @@ export const useExportStore = defineStore('export', {
         // Recording Rendering
         selectedRecording: null as any,
         showRenderOptions: false,
-        renderMode: 'tsunami' as 'tsunami' | 'tails'
+        renderMode: 'tsunami' as 'tsunami' | 'tails',
+        stretchStrategy: 'highest_notes', // 'none', 'octave', 'highest_note', 'highest_notes'
+        targetCapacityGB: 31.5,
+        durationSkew: 0.0, // -1.0 to 1.0
+        minDurationVal: null as number | null
     }),
 
     actions: {
@@ -192,7 +196,9 @@ export const useExportStore = defineStore('export', {
                         tremulants: organStore.organData.tremulants || {},
                         basePath: organStore.organData.basePath
                     },
-                    outputDir: this.outputDir
+                    outputDir: this.outputDir,
+                    stretchStrategy: this.stretchStrategy,
+                    noteDurations: (this as any).calculatedDurations || []
                 };
 
                 const result = await (window as any).myApi.renderBank(JSON.parse(JSON.stringify(payload)));

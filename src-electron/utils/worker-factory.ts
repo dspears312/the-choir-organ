@@ -78,7 +78,7 @@ export class WorkerFactory {
 
             worker.on('error', (err) => {
                 console.error(`[WorkerFactory] Thread Error (${workerName}):`, err);
-                if (options.onError) options.onError(err);
+                if (options.onError) options.onError(err as Error);
                 reject(err);
             });
 
@@ -89,6 +89,34 @@ export class WorkerFactory {
                 }
             });
         });
+    }
+
+    /**
+     * Creates a persistent worker instance.
+     */
+    static createWorker(workerName: string, options: WorkerFactoryOptions = {}): Worker {
+        const workerPath = this.resolveWorkerPath(workerName);
+
+        const workerOptions: WorkerOptions = {
+            workerData: options.workerData,
+            stdout: true,
+            stderr: true,
+            env: {
+                TS_NODE_TRANSPILE_ONLY: 'true',
+                ...process.env
+            }
+        };
+
+        if (workerPath.endsWith('.ts')) {
+            workerOptions.execArgv = [
+                '--loader', 'ts-node/esm',
+                '--experimental-specifier-resolution=node',
+                '--no-warnings'
+            ];
+        }
+
+        console.log(`[WorkerFactory] Creating worker: ${workerPath}`);
+        return new Worker(workerPath, workerOptions);
     }
 
     /**

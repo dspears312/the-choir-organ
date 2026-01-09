@@ -171,8 +171,12 @@ export default defineConfig((/* ctx */) => {
 
     // Full list of options: https://v2.quasar.dev/quasar-cli-vite/developing-electron-apps/configuring-electron
     electron: {
-      // extendElectronMainConf (esbuildConf) {},
-      // extendElectronPreloadConf (esbuildConf) {},
+      extendElectronMainConf(esbuildConf) {
+        esbuildConf.external = [...(esbuildConf.external || []), 'midi'];
+      },
+      extendElectronPreloadConf(esbuildConf) {
+        esbuildConf.external = [...(esbuildConf.external || []), 'midi'];
+      },
 
       // extendPackageJson (json) {},
 

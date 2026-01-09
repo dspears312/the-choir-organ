@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, protocol, net, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, protocol, net, shell, BrowserWindowConstructorOptions } from 'electron';
 import { WorkerFactory } from './utils/worker-factory';
 import fs from 'fs';
 import path from 'path';
@@ -8,12 +8,13 @@ import { setImmediate } from 'timers';
 import { exec } from 'child_process';
 import { renderNote, renderPerformance } from './utils/renderer';
 import { readWav } from './utils/wav-reader';
-import { addToRecent, getRecents, loadOrganState, loadSettings, removeFromRecent, saveOrganState, saveSettings, loadOrganCache, saveOrganCache } from './utils/persistence';
+import { addToRecent, getRecents, loadOrganState, loadSettings, removeFromRecent, saveOrganState, saveSettings, loadOrganCache, saveOrganCache, DEFAULT_SETTINGS } from './utils/persistence';
 import { handleRarExtraction } from './utils/archive-handler';
 import { scanOrganDependencies } from './utils/organ-manager';
 import { createPartialWav } from './utils/partial-wav';
 import { checkAndPromptForSelfRepair, performSelfRepair } from './utils/self-signer';
 import { startWebServer, stopWebServer, getWebServerStatus, updateRemoteState, setMainWindow } from './utils/web-server';
+import { midiManager } from './utils/midi-manager';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const __filename = fileURLToPath(import.meta.url);
@@ -286,18 +287,25 @@ async function createWindow() {
   // Check for self-repair need on startup
   await checkAndPromptForSelfRepair(undefined);
 
+  const settings = loadSettings();
+  const windowState = settings.windowState || DEFAULT_SETTINGS.windowState!;
+
   /**
    * Initial window options
    */
 
-  mainWindow = new BrowserWindow({
+  const windowOptions: BrowserWindowConstructorOptions = {
     icon: path.resolve(currentDir, 'icons/icon.png'), // tray icon
-    width: 1200,
-    height: 800,
+    width: windowState.width,
+    height: windowState.height,
     useContentSize: true,
     frame: false,
     titleBarStyle: 'hidden',
     trafficLightPosition: { x: 18, y: 18 },
+    fullscreenable: true,
+    maximizable: true,
+    resizable: true,
+    simpleFullscreen: false,
     fullscreen: !process.env.DEV,
     webPreferences: {
       contextIsolation: true,
@@ -307,10 +315,21 @@ async function createWindow() {
         path.join(process.env.QUASAR_ELECTRON_PRELOAD_FOLDER, 'electron-preload' + process.env.QUASAR_ELECTRON_PRELOAD_EXTENSION)
       ),
     },
-  });
+  };
+
+  if (windowState.x !== undefined) windowOptions.x = windowState.x;
+  if (windowState.y !== undefined) windowOptions.y = windowState.y;
+
+  mainWindow = new BrowserWindow(windowOptions);
+
+  if (!windowOptions.fullscreen && windowState.isMaximized) {
+    mainWindow.maximize();
+  }
 
   // Provide web-server with the correct main window reference
   setMainWindow(mainWindow);
+  console.log('[Main] Initializing MidiManager...');
+  midiManager.setMainWindow(mainWindow);
 
   if (process.env.DEV) {
     await mainWindow.loadURL(process.env.APP_URL);
@@ -340,8 +359,36 @@ async function createWindow() {
   });
 
   // Window State Events
-  mainWindow.on('maximize', () => mainWindow?.webContents.send('window-state-changed', 'maximized'));
-  mainWindow.on('unmaximize', () => mainWindow?.webContents.send('window-state-changed', 'normal'));
+  const saveWindowState = () => {
+    if (!mainWindow) return;
+    const isMaximized = mainWindow.isMaximized();
+    const isFullScreen = mainWindow.isFullScreen();
+
+    const currentSettings = loadSettings();
+    const state = currentSettings.windowState || { ...DEFAULT_SETTINGS.windowState! };
+
+    if (!isMaximized && !isFullScreen) {
+      const bounds = mainWindow.getBounds();
+      state.x = bounds.x;
+      state.y = bounds.y;
+      state.width = bounds.width;
+      state.height = bounds.height;
+    }
+    state.isMaximized = isMaximized;
+
+    saveSettings({ windowState: state });
+  };
+
+  mainWindow.on('resize', saveWindowState);
+  mainWindow.on('move', saveWindowState);
+  mainWindow.on('maximize', () => {
+    mainWindow?.webContents.send('window-state-changed', 'maximized');
+    saveWindowState();
+  });
+  mainWindow.on('unmaximize', () => {
+    mainWindow?.webContents.send('window-state-changed', 'normal');
+    saveWindowState();
+  });
   mainWindow.on('enter-full-screen', () => mainWindow?.webContents.send('window-state-changed', 'fullscreen'));
   mainWindow.on('leave-full-screen', () => mainWindow?.webContents.send('window-state-changed', 'normal'));
 
@@ -384,10 +431,10 @@ ipcMain.handle('select-odf-file', async (event, specificPath?: string) => {
     const result = await dialog.showOpenDialog({
       properties: ['openFile', 'multiSelections'],
       filters: [
-        { name: 'Organ Files', extensions: ['organ', 'xml', 'Organ_Hauptwerk_xml', 'rar'] },
+        { name: 'Organ Files', extensions: ['organ', 'xml', 'Organ_Hauptwerk_xml', 'rar', 'CompPkg_Hauptwerk_rar'] },
         { name: 'GrandOrgue ODF', extensions: ['organ'] },
         { name: 'Hauptwerk XML', extensions: ['xml', 'Organ_Hauptwerk_xml'] },
-        { name: 'RAR Archives', extensions: ['rar'] }
+        { name: 'RAR Archives', extensions: ['rar', 'CompPkg_Hauptwerk_rar'] }
       ]
     });
     if (result.filePaths.length === 0) return null;
@@ -400,11 +447,16 @@ ipcMain.handle('select-odf-file', async (event, specificPath?: string) => {
   if (!filePath) return null;
 
   try {
-    // If it's a RAR archive (or multiple), handle extraction
-    if (allSelectedPaths.some(p => p.toLowerCase().endsWith('.rar'))) {
-      const extractedOdf = await handleRarExtraction(allSelectedPaths, mainWindow!);
-      if (extractedOdf) {
-        filePath = extractedOdf;
+    const isArchive = allSelectedPaths.some(p => {
+      const lower = p.toLowerCase();
+      return lower.endsWith('.rar') || lower.endsWith('.comppkg_hauptwerk_rar') || lower.endsWith('_rar');
+    });
+
+    // If it's a RAR archive (or multiple), handle extraction only
+    if (isArchive) {
+      const foundOdfs = await handleRarExtraction(allSelectedPaths, mainWindow!);
+      if (foundOdfs.length > 0) {
+        return { installed: true, count: foundOdfs.length, odfs: foundOdfs };
       } else {
         return { error: 'No organ definition files found in the archive(s).' };
       }
@@ -441,7 +493,7 @@ ipcMain.handle('cancel-rendering', () => {
   isCancellationRequested = true;
 });
 
-ipcMain.handle('render-bank', async (event, { bankNumber, bankName, combination, organData, outputDir: initialOutputDir }) => {
+ipcMain.handle('render-bank', async (event, { bankNumber, bankName, combination, organData, outputDir: initialOutputDir, stretchStrategy = 'octave', noteDurations }) => {
   let outputDir = initialOutputDir;
   if (!outputDir) {
     const result = await dialog.showOpenDialog({
@@ -455,75 +507,253 @@ ipcMain.handle('render-bank', async (event, { bankNumber, bankName, combination,
   isCancellationRequested = false;
   const notes = Array.from({ length: 61 }, (_, i) => 36 + i);
 
-  for (let i = 0; i < notes.length; i++) {
-    if (isCancellationRequested) {
-      return { status: 'cancelled', outputDir };
-    }
-    const note = notes[i] as number;
-    // Four digit file number = MIDI Note + (Bank Number * 128)
-    const trackNumber = note + (bankNumber * 128);
+  // Parallel Processing Setup - Limit to 4 to prevent V8 crashes
+  const MAX_WORKERS = 4;
+  const workers: any[] = [];
+  const activeJobs = new Map<number, boolean>();
+  const pendingWrites = new Map<number, any>();
+  let nextExpectedWriteIndex = 0; // Index in 'notes' array
+  let jobQueueIndex = 0;
 
-    // Find pipes for this note across active stops
-    const activePipes: any[] = [];
-    combination.forEach((stopId: string) => {
-      const stop = organData.stops[stopId];
-      if (stop) {
-        const manual = organData.manuals.find((m: any) => String(m.id) === String(stop.manualId));
-        const isPedal = manual?.name.toLowerCase().includes('pedal') || false;
+  console.log(`[Render] Starting parallel render with ${MAX_WORKERS} workers...`);
 
-        const noteOffset = stop.noteOffset || 0;
-        const adjustedNote = note + noteOffset;
-
-        stop.rankIds.forEach((rankId: string) => {
-          const rank = organData.ranks[rankId];
-          if (rank) {
-            const pipe = rank.pipes.find((p: any) => p.midiNote === adjustedNote) || rank.pipes[adjustedNote - 36];
-            if (pipe) {
-              // Hierarchical Gain Summation (excluding Organ global gain, passed separately)
-              const combinedGain = (manual?.gain || 0) + (stop.gain || 0) + (rank.gain || 0) + (pipe.gain || 0);
-
-              activePipes.push({
-                path: pipe.wavPath,
-                volume: stop.volume ?? 100,
-                isPedal,
-                gain: combinedGain,
-                pitchOffsetCents: stop.pitchShift || 0,
-                harmonicNumber: (pipe.harmonicNumber || 1) * (stop.harmonicMultiplier || 1),
-                manualId: stop.manualId,
-                renderingNote: adjustedNote,
-                delay: stop.delay || 0
-              });
-            }
-          }
-        });
-      }
-    });
-
-    // Find active tremulants for this note's manuals
-    const activeTremulants: any[] = [];
-    combination.forEach((stopId: string) => {
-      if (stopId.startsWith('TREM_')) {
-        const tremId = stopId.replace('TREM_', '');
-        const trem = organData.tremulants[tremId];
-        if (trem) {
-          activeTremulants.push(trem);
-        }
-      }
-    });
-
-    if (activePipes.length > 0) {
-      await renderNote(note, activePipes, outputDir, trackNumber, organData.globalGain || 0, activeTremulants);
-    }
-
-    // Report progress
-    const progress = Math.round(((i + 1) / notes.length) * 100);
-    event.sender.send('render-progress', progress);
-
-    // Yield to event loop to avoid blocking main thread completely
-    await new Promise(resolve => setImmediate(resolve));
+  // Initialize Worker Pool
+  for (let i = 0; i < MAX_WORKERS; i++) {
+    const worker = WorkerFactory.createWorker('render-note-worker');
+    workers.push(worker);
   }
 
-  // Update tco.txt with bank name - MOVE TO END
+  try {
+    const cleanup = () => {
+      workers.forEach(w => w.terminate());
+    };
+
+    await new Promise<void>((resolve, reject) => {
+      let completedCount = 0;
+
+      // Processing Loop function for each worker
+      const processNextJob = (worker: any) => {
+        if (isCancellationRequested) {
+          cleanup();
+          resolve(); // Or reject specialized
+          return;
+        }
+
+        if (jobQueueIndex >= notes.length) {
+          // No more jobs, this worker is idle
+          return;
+        }
+
+        const noteIndex = jobQueueIndex;
+        jobQueueIndex++;
+        const note = notes[noteIndex] as number;
+        const trackNumber = note + (bankNumber * 128);
+
+        // Prepare job data (same logic as before)
+        const activePipes: any[] = [];
+        combination.forEach((stopId: string) => {
+          const stop = organData.stops[stopId];
+          if (stop) {
+            const manual = organData.manuals.find((m: any) => String(m.id) === String(stop.manualId));
+            const isPedal = manual?.name.toLowerCase().includes('pedal') || false;
+            const noteOffset = stop.noteOffset || 0;
+            const adjustedNote = note + noteOffset;
+
+            stop.rankIds.forEach((rankId: string) => {
+              const rank = organData.ranks[rankId];
+              if (rank) {
+                let pipe = rank.pipes.find((p: any) => p.midiNote === adjustedNote) || rank.pipes[adjustedNote - 36];
+                let extraPitchShift = 0;
+
+                // Stretch Strategies
+                if (!pipe && stretchStrategy !== 'none') {
+
+                  if (stretchStrategy === 'octave') {
+                    // Look back 12 semitones at a time
+                    let searchNote = adjustedNote - 12;
+                    let shift = 1200;
+                    while (searchNote >= 36) {
+                      const fallback = rank.pipes.find((p: any) => p.midiNote === searchNote) || rank.pipes[searchNote - 36];
+                      if (fallback) {
+                        pipe = fallback;
+                        extraPitchShift = shift;
+                        break;
+                      }
+                      searchNote -= 12;
+                      shift += 1200;
+                    }
+                  }
+                  else if (stretchStrategy === 'highest_note') {
+                    // Find highest available note
+                    const sortedPipes = [...rank.pipes].sort((a: any, b: any) => a.midiNote - b.midiNote);
+                    if (sortedPipes.length > 0) {
+                      const maxPipe = sortedPipes[sortedPipes.length - 1];
+                      if (adjustedNote > maxPipe.midiNote) {
+                        pipe = maxPipe;
+                        extraPitchShift = (adjustedNote - maxPipe.midiNote) * 100;
+                      }
+                    }
+                  }
+                  else if (stretchStrategy === 'highest_notes') {
+                    // Find top 3 (or n) highest available notes
+                    const sortedPipes = [...rank.pipes].sort((a: any, b: any) => a.midiNote - b.midiNote);
+                    if (sortedPipes.length > 0) {
+                      const maxPipe = sortedPipes[sortedPipes.length - 1];
+
+                      if (adjustedNote > maxPipe.midiNote) {
+                        // Get top 3 candidates (or fewer if not enough)
+                        const poolSize = Math.min(3, sortedPipes.length);
+                        const candidates = sortedPipes.slice(-poolSize).reverse(); // [max, max-1, max-2]
+
+                        // Strategy: Cycle through them based on target note to create variation
+                        const candidateIndex = (adjustedNote) % poolSize;
+                        const selectedPipe = candidates[candidateIndex];
+
+                        if (selectedPipe) {
+                          pipe = selectedPipe;
+                          extraPitchShift = (adjustedNote - selectedPipe.midiNote) * 100;
+                        }
+                      }
+                    }
+                  }
+                }
+
+                if (pipe) {
+                  const combinedGain = (manual?.gain || 0) + (stop.gain || 0) + (rank.gain || 0) + (pipe.gain || 0);
+
+                  activePipes.push({
+                    path: pipe.wavPath,
+                    volume: stop.volume ?? 100,
+                    isPedal,
+                    gain: combinedGain,
+                    pitchOffsetCents: (stop.pitchShift || 0) + extraPitchShift,
+                    harmonicNumber: (pipe.harmonicNumber || 1) * (stop.harmonicMultiplier || 1),
+                    manualId: stop.manualId,
+                    renderingNote: pipe.midiNote, // FORCE SOURCE NOTE to avoid double-shifting (renderer auto-tunes relative to this)
+                    delay: stop.delay || 0,
+                    releasePath: pipe.releasePath
+                  });
+                }
+              }
+            });
+          }
+        });
+
+        const activeTremulants: any[] = [];
+        combination.forEach((stopId: string) => {
+          if (stopId.startsWith('TREM_')) {
+            const tremId = stopId.replace('TREM_', '');
+            const trem = organData.tremulants[tremId];
+            if (trem) activeTremulants.push(trem);
+          }
+        });
+
+        // Calculate Duration
+        let durationMs = 60000; // Default 60s
+        if (noteDurations && noteDurations.length > 0) {
+          // noteDurations is array of 61 values (index 0 = note 36)
+          const durIdx = note - 36;
+          if (durIdx >= 0 && durIdx < noteDurations.length) {
+            durationMs = noteDurations[durIdx];
+          }
+        }
+
+        // Send job
+        if (activePipes.length > 0) {
+          worker.postMessage({
+            type: 'render',
+            data: {
+              note,
+              pipes: activePipes,
+              trackNumber,
+              globalGain: organData.globalGain || 0,
+              activeTremulants,
+              durationMs
+            }
+          });
+          activeJobs.set(noteIndex, true);
+        } else {
+          // Skip silence, but treat as completed "write"
+          handleCompletion(noteIndex, null, worker);
+        }
+      };
+
+      const handleCompletion = (index: number, buffer: any, worker: any) => {
+        // Store Result
+        if (buffer) {
+          pendingWrites.set(index, buffer);
+        } else {
+          pendingWrites.set(index, 'EMPTY');
+        }
+
+        // Try to write Sequentially
+        while (pendingWrites.has(nextExpectedWriteIndex)) {
+          const data = pendingWrites.get(nextExpectedWriteIndex);
+
+          if (data !== 'EMPTY') {
+            const n = notes[nextExpectedWriteIndex] as number;
+            const tNum = n + (bankNumber * 128);
+            const fileName = `${tNum.toString().padStart(4, '0')}.wav`;
+            const filePath = path.join(outputDir, fileName);
+
+            // Write SYNC
+            // The worker returns 'wav.toBuffer()'. Correct.
+            fs.writeFileSync(filePath, Buffer.from(data));
+          }
+
+          // Clean up memory
+          pendingWrites.delete(nextExpectedWriteIndex);
+
+          // Report Progress
+          const progress = Math.round(((nextExpectedWriteIndex + 1) / notes.length) * 100);
+          event.sender.send('render-progress', progress);
+
+          nextExpectedWriteIndex++;
+          completedCount++;
+        }
+
+        // Check if all done
+        if (completedCount >= notes.length) {
+          cleanup();
+          resolve();
+          return;
+        }
+
+        // Worker is free, take next job
+        processNextJob(worker);
+      };
+
+      // Set up listeners
+      workers.forEach(worker => {
+        worker.on('message', (msg: any) => {
+          if (msg.type === 'success') {
+            // Find index
+            const idx = notes.indexOf(msg.note);
+            handleCompletion(idx, msg.buffer, worker);
+          } else if (msg.type === 'error') {
+            console.error(`Worker error on note ${msg.note}:`, msg.error);
+            cleanup(); // Fail hard? Or skip?
+            reject(new Error(msg.error));
+          }
+        });
+
+        // Seed the worker
+        processNextJob(worker);
+      });
+    });
+
+  } catch (err: any) {
+    console.error('Parallel render failed:', err);
+    // Ensure cleanup
+    workers.forEach(w => w.terminate());
+    return { status: 'error', message: err.message };
+  }
+
+  if (isCancellationRequested) {
+    return { status: 'cancelled', outputDir };
+  }
+
+  // Update tco.txt (Same logic)
   try {
     const tcoPath = path.join(outputDir, 'tco.txt');
     let tcoContent = '';
@@ -577,11 +807,11 @@ ipcMain.handle('render-performance', async (event, { recording, organData, rende
         banks
       },
       onProgress: (progress) => {
-        mainWindow?.webContents.send('render-progress', { status: 'Rendering Performance...', progress });
+        mainWindow?.webContents.send('render-progress', progress);
       }
     });
 
-    mainWindow?.webContents.send('render-progress', { status: 'Complete', progress: 100 });
+    mainWindow?.webContents.send('render-progress', 100);
     return { success: true, filePath: result.filePath };
   } catch (e: any) {
     console.error('Performance render failed:', e);
@@ -1177,5 +1407,10 @@ if (!gotTheLock) {
     if (mainWindow === undefined) {
       void createWindow();
     }
+  });
+
+  app.on('will-quit', () => {
+    console.log('[Main] App is quitting, closing MIDI ports...');
+    midiManager.close();
   });
 }

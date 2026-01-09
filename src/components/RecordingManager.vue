@@ -1,7 +1,17 @@
 <template>
     <div class="recording-manager column no-wrap full-height">
         <div class="q-pa-md bg-header-gradient border-bottom-amber row items-center justify-between">
-            <div class="text-h6 font-cinzel text-amber-9">Recordings</div>
+            <div class="row items-center q-gutter-x-md">
+                <div class="text-h6 font-cinzel text-amber-9">Recordings</div>
+                <!-- <div class="row items-center q-gutter-x-sm bg-grey-9 q-px-sm rounded-borders" style="border: 1px solid #444;">
+                    <q-icon name="mdi-metronome" color="amber-7" size="xs" />
+                    <div class="text-caption text-amber-8 font-mono" style="min-width: 32px">
+                        {{ organStore.playbackSpeed.toFixed(1) }}x
+                    </div>
+                    <q-slider :model-value="organStore.playbackSpeed" @update:model-value="val => organStore.playbackSpeed = val"
+                        :min="0.5" :max="2.0" :step="0.1" color="amber" track-color="grey-8" style="width: 80px" dense />
+                </div> -->
+            </div>
             <div class="row items-center q-gutter-x-sm">
                 <q-btn v-if="allowExport" flat round dense icon="mdi-upload" color="amber-1"
                     @click="organStore.importRecordingFromMIDI()">
@@ -87,7 +97,7 @@
                 <div class="text-h6 font-cinzel text-amber">Render Recording</div>
                 <div class="text-caption text-grey-5 q-mb-md">Choose rendering mode for "{{
                     exportStore?.selectedRecording?.name
-                    }}"
+                }}"
                 </div>
 
                 <q-list dark>

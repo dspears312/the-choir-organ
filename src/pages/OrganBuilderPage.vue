@@ -185,9 +185,12 @@
         <!-- Dialogs moved to global/managers -->
 
         <!-- Sample Loading Overlay -->
-        <q-inner-loading :showing="organStore.isLoadingOrgan" dark style="z-index: 2000; background: rgba(0,0,0,0.8);">
+        <q-inner-loading :showing="organStore.isLoadingOrgan || organStore.isExtracting" dark
+            style="z-index: 2000; background: rgba(0,0,0,0.8);">
             <q-spinner-gears size="50px" color="amber" />
-            <div class="text-h6 text-amber font-cinzel q-mt-md">Loading Organ...</div>
+            <div class="text-h6 text-amber font-cinzel q-mt-md">
+                {{ organStore.isExtracting ? 'Extracting Organ...' : 'Loading Organ...' }}
+            </div>
             <div class="text-caption text-grey-4 q-mt-sm">{{ organStore.renderStatus }}</div>
             <q-linear-progress v-if="organStore.extractionProgress > 0" :value="organStore.extractionProgress"
                 color="amber" class="q-mt-md" style="width: 300px" rounded size="6px" />
