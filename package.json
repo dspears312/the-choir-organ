@@ -1,6 +1,6 @@
 {
   "name": "the-choir-organ",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Tsunami Utilities by Sacred Music Library",
   "productName": "The Choir Organ",
   "author": "Daniel Spears <dspears@tecumtech.com>",
@@ -11,7 +11,7 @@
     "dev:remote": "vite -c vite.remote.config.ts",
     "build": "npm run build:remote && npm run build:workers && quasar build -m electron",
     "build:remote": "vite build -c vite.remote.config.ts",
-    "build:workers": "esbuild src-electron/workers/*.ts --bundle --platform=node --format=esm --outdir=src-electron/workers-dist",
+    "build:workers": "esbuild src-electron/workers/*.ts --bundle --platform=node --format=cjs --outdir=src-electron/workers-dist && echo '{\"type\": \"commonjs\"}' > src-electron/workers-dist/package.json",
     "corrupt": "xattr -w com.apple.quarantine \"0081;64a5196e;Chrome;39082C96-5743-4Cbf-8D82-2F1D06900000\" \"dist/electron/Packaged/mac-universal/The Choir Organ.app\" && codesign --remove-signature \"dist/electron/Packaged/mac-universal/The Choir Organ.app\"",
     "postinstall": "quasar prepare"
   },

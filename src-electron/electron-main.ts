@@ -1392,11 +1392,11 @@ if (!gotTheLock) {
 
     createWindow();
     // Check for updates after a short delay on startup
-    setTimeout(() => {
-      autoUpdater.checkForUpdatesAndNotify().catch((err: any) => {
-        console.error('Initial check for updates failed:', err);
-      });
-    }, 3000);
+    // setTimeout(() => {
+    //   autoUpdater.checkForUpdatesAndNotify().catch((err: any) => {
+    //     console.error('Initial check for updates failed:', err);
+    //   });
+    // }, 3000);
   });
 
   app.on('window-all-closed', () => {
